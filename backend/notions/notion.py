@@ -17,7 +17,7 @@ Notion OAuth + FastAPI 최소 예제
 
 [실행]
 uv add fastapi uvicorn python-dotenv notion-client httpx sqlalchemy
-uv run uvicorn app:app --reload --port 8000
+uv run uvicorn main:app --reload --port 8000
 
 그 후 http://localhost:8000/login 접속 → 동의 → /oauth/callback → 토큰 저장
 응답 body의 workspace_id를 기록해 두세요. 이후 요청 헤더 X-Workspace-Id 또는 쿼리 ?workspace_id= 로 지정.
@@ -32,13 +32,15 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from notion_client import Client
 from notion_client.errors import APIResponseError
 from pydantic import BaseModel
-from sqlalchemy import Column, DateTime, String, create_engine
-from sqlalchemy.orm import Session, declarative_base, sessionmaker
+from sqlalchemy import Column, DateTime, String
+from sqlalchemy.orm import Session
+
+from utils.db import Base
 
 # -----------------------
 # 환경 변수 로드
@@ -55,11 +57,6 @@ NOTION_AUTH_URL = "https://api.notion.com/v1/oauth/authorize"
 NOTION_TOKEN_URL = "https://api.notion.com/v1/oauth/token"
 
 # -----------------------
-# FastAPI 앱
-# -----------------------
-app = FastAPI(title="Notion OAuth Starter", version="1.0.0")
-
-# -----------------------
 # 상태(state) 저장 (간단히 메모리)
 # 실제 운영에서는 Redis 등 외부 스토리지 사용 권장
 # -----------------------
@@ -67,11 +64,8 @@ _state_store: dict[str, datetime] = {}
 STATE_TTL = timedelta(minutes=10)
 
 # -----------------------
-# DB 설정 (SQLite + SQLAlchemy)
+# DB 모델 정의
 # -----------------------
-engine = create_engine("sqlite:///notion_tokens.db", connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False, autocommit=False)
-Base = declarative_base()
 
 
 class NotionToken(Base):
@@ -83,21 +77,6 @@ class NotionToken(Base):
     refresh_token = Column(String, nullable=True)
     token_type = Column(String, nullable=True)  # 보통 "bearer"
     updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
-
-
-Base.metadata.create_all(bind=engine)
-
-
-# -----------------------
-# 유틸: DB 세션 의존성
-# -----------------------
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 # -----------------------
@@ -309,7 +288,6 @@ def build_block_tree(client: Client, block_id: str) -> List[Dict[str, Any]]:
 # -----------------------
 # 라우트: OAuth 시작
 # -----------------------
-@app.get("/login")
 async def login():
     # CSRF 방지를 위해 state 사용
     state = secrets.token_urlsafe(24)
@@ -321,8 +299,11 @@ async def login():
 # -----------------------
 # 라우트: OAuth 콜백
 # -----------------------
-@app.get("/oauth/callback")
-async def oauth_callback(code: Optional[str] = None, state: Optional[str] = None, db: Session = Depends(get_db)):
+async def oauth_callback(
+    code: Optional[str],
+    state: Optional[str],
+    db: Session,
+):
     if not code or not state:
         raise HTTPException(status_code=400, detail="code/state 누락")
 
@@ -351,12 +332,11 @@ class PagesResponse(BaseModel):
     pages: List[Dict[str, Any]]
 
 
-@app.get("/me/pages", response_model=PagesResponse)
 async def list_my_pages(
-    full: bool = Query(False, description="True면 각 페이지의 콘텐츠 트리까지 포함(부하 큼)"),
-    limit: Optional[int] = Query(None, ge=1, le=1000, description="가져올 최대 페이지 수(없으면 모두)"),
-    workspace_id: str = Depends(get_workspace_id_dep),
-    db: Session = Depends(get_db),
+    full: bool,
+    limit: Optional[int],
+    workspace_id: str,
+    db: Session,
 ):
     def _search_pages(client: Client):
         pages: List[Dict[str, Any]] = []
@@ -414,8 +394,7 @@ async def list_my_pages(
 # -----------------------
 # 라우트: 특정 페이지 콘텐츠만 (개별 트리)
 # -----------------------
-@app.get("/me/pages/{page_id}/content")
-async def get_page_content(page_id: str, workspace_id: str = Depends(get_workspace_id_dep), db: Session = Depends(get_db)):
+async def get_page_content(page_id: str, workspace_id: str, db: Session):
     def _get_content(client: Client, pid: str):
         return build_block_tree(client, pid)
 
@@ -426,8 +405,7 @@ async def get_page_content(page_id: str, workspace_id: str = Depends(get_workspa
 # -----------------------
 # 라우트: 토큰 강제 리프레시 (테스트용)
 # -----------------------
-@app.post("/me/token/refresh")
-async def api_refresh_token(workspace_id: str = Depends(get_workspace_id_dep), db: Session = Depends(get_db)):
+async def api_refresh_token(workspace_id: str, db: Session):
     row = await refresh_access_token(db, workspace_id)
     return {
         "workspace_id": row.workspace_id,
