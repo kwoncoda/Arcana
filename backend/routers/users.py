@@ -5,7 +5,7 @@ import hashlib
 import hmac
 import os
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr, constr
@@ -13,6 +13,7 @@ from sqlalchemy import BigInteger, Boolean, Column, DateTime, String, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from utils.auth import create_access_token, create_refresh_token
 from utils.db import Base, get_db
 
 
@@ -92,6 +93,13 @@ class UserResponse(BaseModel):
         orm_mode = True
 
 
+class LoginResponse(BaseModel):
+    user: UserResponse
+    access_token: str
+    refresh_token: str
+    token_type: Literal["bearer"] = "bearer"
+
+
 router = APIRouter(prefix="/users", tags=["users"])
 
 
@@ -134,8 +142,8 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserRes
     return user
 
 
-@router.post("/login", response_model=UserResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)) -> UserResponse:
+@router.post("/login", response_model=LoginResponse)
+def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse:
     user = db.scalar(select(User).where(User.id == payload.id))
 
     if not user or not verify_password(payload.password, user.password_hash):
@@ -155,4 +163,11 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> UserResponse:
     db.commit()
     db.refresh(user)
 
-    return user
+    access_token = create_access_token(subject=str(user.idx))
+    refresh_token = create_refresh_token(subject=str(user.idx))
+
+    return LoginResponse(
+        user=user,
+        access_token=access_token,
+        refresh_token=refresh_token,
+    )
