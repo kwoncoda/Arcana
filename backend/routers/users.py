@@ -146,7 +146,6 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse
     refresh_token = create_refresh_token(subject=str(user.idx))
 
     return LoginResponse(
-        user=user,
         access_token=access_token,
         refresh_token=refresh_token,
     )

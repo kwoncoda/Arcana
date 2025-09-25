@@ -9,10 +9,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
 
 
-def _get_env_int(name: str, default: int) -> int:
+def _get_env_int(name: str) -> int:
     raw = os.getenv(name)
-    if raw is None:
-        return default
     try:
         return int(raw)
     except ValueError as exc:  

@@ -35,7 +35,7 @@ app = FastAPI(
 )
 
 app.include_router(users.router)
-app.include_router(notion.router)
+#app.include_router(notion.router)
 
 
 # 공공 API

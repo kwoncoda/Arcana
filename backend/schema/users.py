@@ -6,8 +6,8 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, EmailStr, StringConstraints, ConfigDict
 
 # 공통 문자열 정의
-IdStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=4, max_length=255)]
-PasswordStr = Annotated[str, StringConstraints(min_length=8, max_length=128)]
+IdStr = Annotated[str, StringConstraints(strip_whitespace=True,max_length=255)]
+PasswordStr = Annotated[str, StringConstraints(max_length=128)]
 NicknameStr = Annotated[str, StringConstraints(strip_whitespace=True, max_length=100)]
 
 class RegisterRequest(BaseModel):
@@ -37,7 +37,5 @@ class UserResponse(BaseModel):
 
 class LoginResponse(BaseModel):
     """로그인 성공 시 사용자 정보와 토큰을 함께 응답한다."""
-    user: UserResponse
     access_token: str
     refresh_token: str
-    token_type: Literal["bearer"] = "bearer"
