@@ -15,7 +15,7 @@ def _get_env_int(name: str, default: int) -> int:
         return default
     try:
         return int(raw)
-    except ValueError as exc:  # pragma: no cover - defensive programming
+    except ValueError as exc:  
         raise RuntimeError(f"환경 변수 {name} 은(는) 정수여야 합니다.") from exc
 
 
@@ -23,11 +23,11 @@ JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
 if not JWT_SECRET_KEY:
     raise RuntimeError("JWT_SECRET_KEY 환경 변수를 설정하세요.")
 
-JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM")
 if JWT_ALGORITHM != "HS256":
-    raise RuntimeError("현재는 HS256 알고리즘만 지원합니다.")
-ACCESS_TOKEN_EXPIRE_MINUTES = _get_env_int("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", 30)
-REFRESH_TOKEN_EXPIRE_DAYS = _get_env_int("JWT_REFRESH_TOKEN_EXPIRE_DAYS", 7)
+    raise RuntimeError("JWT_ALGORITHM 환경 변수를 설정하세요.")
+ACCESS_TOKEN_EXPIRE_MINUTES = _get_env_int("JWT_ACCESS_TOKEN_EXPIRE_MINUTES")
+REFRESH_TOKEN_EXPIRE_DAYS = _get_env_int("JWT_REFRESH_TOKEN_EXPIRE_DAYS")
 
 
 def _b64url_encode(data: bytes) -> str:
