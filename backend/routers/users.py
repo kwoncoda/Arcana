@@ -5,14 +5,13 @@ import hashlib
 import hmac
 import os
 from datetime import datetime
-from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr, constr
 from sqlalchemy import BigInteger, Boolean, Column, DateTime, String, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from schema.users import LoginRequest, LoginResponse, RegisterRequest, UserResponse
 from utils.auth import create_access_token, create_refresh_token
 from utils.db import Base, get_db
 
@@ -21,21 +20,29 @@ PBKDF2_ITERATIONS = 390_000
 
 
 def _b64encode(raw: bytes) -> str:
+    """PBKDF2 결과에서 생성된 바이트 데이터를 URL-safe Base64 문자열로 변환한다."""
+
     return base64.urlsafe_b64encode(raw).decode("utf-8").rstrip("=")
 
 
 def _b64decode(data: str) -> bytes:
+    """Base64 패딩을 보정한 뒤 원래의 바이트 데이터로 복원한다."""
+
     padding = "=" * (-len(data) % 4)
     return base64.urlsafe_b64decode(data + padding)
 
 
 def hash_password(password: str) -> str:
+    """랜덤 솔트를 사용해 PBKDF2-SHA256 알고리즘으로 비밀번호 해시를 생성한다."""
+
     salt = os.urandom(16)
     dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, PBKDF2_ITERATIONS)
     return f"pbkdf2_sha256${PBKDF2_ITERATIONS}${_b64encode(salt)}${_b64encode(dk)}"
 
 
 def verify_password(password: str, hashed: str) -> bool:
+    """저장된 해시 문자열을 파싱해 입력 비밀번호와 동일한지 비교한다."""
+
     try:
         algorithm, iterations, salt_b64, hash_b64 = hashed.split("$")
     except ValueError:
@@ -68,43 +75,13 @@ class User(Base):
     last_login = Column(DateTime)
 
 
-class RegisterRequest(BaseModel):
-    id: constr(strip_whitespace=True, min_length=4, max_length=255)
-    email: EmailStr
-    password: constr(min_length=8, max_length=128)
-    nickname: Optional[constr(strip_whitespace=True, max_length=100)] = None
-
-
-class LoginRequest(BaseModel):
-    id: constr(strip_whitespace=True, min_length=4, max_length=255)
-    password: constr(min_length=8, max_length=128)
-
-
-class UserResponse(BaseModel):
-    idx: int
-    id: str
-    email: EmailStr
-    nickname: Optional[str]
-    active: bool
-    created: datetime
-    last_login: Optional[datetime]
-
-    class Config:
-        orm_mode = True
-
-
-class LoginResponse(BaseModel):
-    user: UserResponse
-    access_token: str
-    refresh_token: str
-    token_type: Literal["bearer"] = "bearer"
-
-
 router = APIRouter(prefix="/users", tags=["users"])
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserResponse:
+    """신규 사용자 정보를 검증한 후 해시된 비밀번호와 함께 저장한다."""
+
     existing = db.scalar(select(User).where((User.id == payload.id) | (User.email == payload.email)))
     if existing:
         raise HTTPException(
@@ -144,6 +121,8 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserRes
 
 @router.post("/login", response_model=LoginResponse)
 def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse:
+    """사용자 인증에 성공하면 마지막 로그인 시간을 갱신하고 토큰을 발급한다."""
+
     user = db.scalar(select(User).where(User.id == payload.id))
 
     if not user or not verify_password(payload.password, user.password_hash):
