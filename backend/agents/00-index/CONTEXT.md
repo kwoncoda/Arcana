@@ -11,13 +11,13 @@ epic: EPIC-001
 
 
 ## 읽기 순서
-1) /docs/00-index/GLOSSARY.md
-2) /docs/10-prd/PRD-EPIC-001-arcana-mvp.md
-3) /docs/20-trd/TRD-EPIC-001-arcana-mvp.md
-4) /docs/30-design/DESIGN-EPIC-001-arcana-mvp.md
-5) /docs/40-stories/*
-6) /docs/50-Coding-Convention/plan.md
-7) /docs/60-tasks/*
+1) /backend/agents/00-index/GLOSSARY.md
+2) /backend/agents/10-prd/PRD-EPIC-001-arcana-mvp.md
+3) /backend/agents/20-trd/TRD-EPIC-001-arcana-mvp.md
+4) /backend/agents/30-design/DESIGN-EPIC-001-arcana-mvp.md
+5) /backend/agents/40-stories/*
+6) /backend/agents/50-Coding-Convention/plan.md
+7) /backend/agents/60-tasks/*
 
 
 
