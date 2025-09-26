@@ -41,7 +41,7 @@ app.include_router(users.router)
 # 공공 API
 
 # 헬스 체크
-@app.get("/api/health")
+@app.get("/health")
 def health():
     return {"status": "ok"}
 
