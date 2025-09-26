@@ -6,7 +6,6 @@ status: ready
 updated: 2025-09-26
 links:
 epic: EPIC-001
-openapi: /openapi/openapi.yaml
 ---
 # Arcana Docs — Entry
 
@@ -19,7 +18,6 @@ openapi: /openapi/openapi.yaml
 5) /docs/40-stories/*
 6) /docs/50-Coding-Convention/plan.md
 7) /docs/60-tasks/*
-8) /docs/70-adr/*
 
 
 
