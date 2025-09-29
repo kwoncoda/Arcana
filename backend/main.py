@@ -1,20 +1,6 @@
-from typing import Optional
+from fastapi import FastAPI
 
-from fastapi import Depends, FastAPI, Query
-from sqlalchemy.orm import Session
-
-from routers import users, notion
-
-from notions import (
-    PagesResponse,
-    api_refresh_token,
-    get_page_content,
-    get_workspace_id_dep,
-    list_my_pages,
-    login,
-    oauth_callback,
-)
-from utils.db import get_db
+from routers import notion, users
 
 
 # swagger 페이지 소개
@@ -35,7 +21,7 @@ app = FastAPI(
 )
 
 app.include_router(users.router)
-#app.include_router(notion.router)
+app.include_router(notion.router)
 
 
 # 공공 API
