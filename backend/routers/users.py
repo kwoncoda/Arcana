@@ -81,19 +81,28 @@ router = APIRouter(prefix="/users", tags=["users"])
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserResponse:
     """신규 사용자 정보를 검증한 후 해시된 비밀번호와 함께 저장한다."""
+    
+    if payload.id:
+        id_owner = db.scalar(select(User).where(User.id == payload.id))
+        if id_owner:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="이미 사용 중인 아이디입니다.",
+            )
 
-    existing = db.scalar(select(User).where((User.id == payload.id) | (User.email == payload.email)))
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="이미 사용 중인 아이디 또는 이메일입니다.",
-        )
-
+    if payload.email:
+        email_owner = db.scalar(select(User).where(User.email == payload.email))
+        if email_owner:
+            raise HTTPException(
+                status_code=460,
+                detail="이미 사용 중인 이메일입니다.",
+            )
+            
     if payload.nickname:
         nickname_owner = db.scalar(select(User).where(User.nickname == payload.nickname))
         if nickname_owner:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=461,
                 detail="이미 사용 중인 닉네임입니다.",
             )
 

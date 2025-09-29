@@ -21,11 +21,11 @@ sequenceDiagram
     Frontend->>Backend: 회원가입 정보 전송 (ID, PW, 이메일 등)
     activate Backend
 		
-		%% 아직 중복은 확인하지 않음
-    %% Backend->>DB: 사용자 정보 중복 확인 요청
-    %% activate DB
-    %% DB-->>Backend: 중복 확인 결과 반환
-    %% deactivate DB
+
+    Backend->>DB: 사용자 정보 중복 확인 요청
+    activate DB
+    DB-->>Backend: 중복 확인 결과 반환
+    deactivate DB
 
     alt 중복 또는 유효하지 않은 데이터
         Backend-->>Frontend: 에러 메시지 전송
