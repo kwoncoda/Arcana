@@ -13,15 +13,17 @@
 - 가능한 가장 간단한 솔루션을 사용하세요
 
 # 코딩 순서
-1. tasks 폴더에 있는 task중 첫번째 ready부터 순서대로 코딩해주세요.
+1. 요청 사항이 없다면 tasks 폴더에 있는 task중 첫번째 ready부터 순서대로 코딩해주세요.
 
 2. draft나 done이 된 문서는 코딩하지 말아주세요.
 
 3. 코딩하는 과정에는 in-progress로 상태를 바꾸어주세요.
 
 
-# 정적 코딩
+# task 규칙
 1. direct coding이 yes라면 직접 짜서 한 task입니다.
+
+2. 요청 사항이 들어오면 /backend/agents/60-tasks 폴더에 task를 순서대로 기록합니다.
 
 
 # 코딩 완료시
