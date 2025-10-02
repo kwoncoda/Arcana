@@ -6,7 +6,7 @@ CREATE TABLE users (
   idx           BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '내부 PK(시스템 식별자)',
   id            VARCHAR(255) NOT NULL UNIQUE      COMMENT '로그인용 사용자 ID(사용자 입력값)',
   email         VARCHAR(255) NOT NULL UNIQUE      COMMENT '이메일(로그인/알림/비밀번호 재설정)',
-  nickname      VARCHAR(100) UNIQUE               COMMENT '표시 이름(닉네임)',
+  nickname      VARCHAR(100) NOT NULL UNIQUE      COMMENT '표시 이름(닉네임)',
   password_hash VARCHAR(255) NOT NULL             COMMENT '비밀번호 해시(bcrypt/Argon2 등)',
   active        TINYINT(1) NOT NULL DEFAULT 1     COMMENT '계정 활성 여부(1=활성, 0=비활성/차단)',
   created       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '계정 생성 시각',
@@ -16,7 +16,7 @@ CREATE TABLE users (
 -- 2) 조직
 CREATE TABLE organizations (
   idx     BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '조직 PK',
-  name    VARCHAR(200) NOT NULL             COMMENT '조직명',
+  name    VARCHAR(200) NOT NULL UNIQUE      COMMENT '조직명',
   created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '조직 생성 시각'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='조직(회사/팀)';
 
