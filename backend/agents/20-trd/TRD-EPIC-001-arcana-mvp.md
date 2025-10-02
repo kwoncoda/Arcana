@@ -1,3 +1,14 @@
+---
+id: EPIC-001
+type: trd
+title: Arcana MVP — TRD
+status: ready
+owner: backend
+updated: 2025-09-26
+---
+# Arcana MVP — TRD
+
+## A. 아키텍처(요약)
 sequenceDiagram
     %% 참가자 정의 (프론트, 백엔드, DB, 노션)
     participant Frontend as 프론트엔드
@@ -10,11 +21,11 @@ sequenceDiagram
     Frontend->>Backend: 회원가입 정보 전송 (ID, PW, 이메일 등)
     activate Backend
 		
-		%% 아직 중복은 확인하지 않음
-    %% Backend->>DB: 사용자 정보 중복 확인 요청
-    %% activate DB
-    %% DB-->>Backend: 중복 확인 결과 반환
-    %% deactivate DB
+
+    Backend->>DB: 사용자 정보 중복 확인 요청
+    activate DB
+    DB-->>Backend: 중복 확인 결과 반환
+    deactivate DB
 
     alt 중복 또는 유효하지 않은 데이터
         Backend-->>Frontend: 에러 메시지 전송
@@ -97,3 +108,4 @@ sequenceDiagram
     activate Frontend
     Frontend->>Frontend: 화면에 답변 표시
     deactivate Frontend
+
