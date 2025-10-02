@@ -134,11 +134,12 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserRes
             detail="이미 사용 중인 사용자 정보가 있습니다.",
         )
 
-    workspace: Workspace
+    workspace_type = WorkspaceType(payload.type)
 
-    if payload.type == WorkspaceType.organization.value:
+    if workspace_type is WorkspaceType.organization:
         organization = Organization(name=payload.organization_name)
         db.add(organization)
+
         try:
             db.flush()
         except IntegrityError:
@@ -157,7 +158,9 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserRes
 
         workspace_name = payload.workspace_name or organization.name
         workspace = Workspace(
-            type=WorkspaceType.organization.value,
+
+            type=workspace_type.value,
+
             name=workspace_name,
             organization_idx=organization.idx,
         )
@@ -168,7 +171,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserRes
             or f"{payload.id}'s workspace"
         )
         workspace = Workspace(
-            type=WorkspaceType.personal.value,
+            type=workspace_type.value,
             name=workspace_name,
             owner_user_idx=user.idx,
         )
