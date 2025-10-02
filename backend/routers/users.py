@@ -156,7 +156,9 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserRes
 
         workspace_name = payload.workspace_name or organization.name
         workspace = Workspace(
+
             type=workspace_type.value,
+
             name=workspace_name,
             organization_idx=organization.idx,
         )
