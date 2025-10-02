@@ -25,7 +25,7 @@ CREATE TABLE memberships (
   idx               BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '멤버십 PK',
   user_idx          BIGINT NOT NULL                   COMMENT '사용자 FK',
   organization_idx  BIGINT NOT NULL                   COMMENT '조직 FK',
-  role              ENUM('owner','admin','member') NOT NULL DEFAULT 'member' COMMENT '조직 내 역할',
+  role              ENUM('owner','admin','member') NOT NULL DEFAULT 'member' COMMENT '조직 내 역할(mvp에서는 member로만 함)',
   created           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '가입(생성) 시각',
   UNIQUE KEY uk_user_org (user_idx, organization_idx),
   KEY idx_org (organization_idx),   -- 조회 최적화
@@ -70,11 +70,11 @@ CREATE TABLE rag_indexes (
   CONSTRAINT fk_rag_ws FOREIGN KEY (workspace_idx) REFERENCES workspaces(idx)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='워크스페이스별 RAG 인덱스 메타';
 
--- 6) 데이터 소스(MVP: Notion만)
+-- 6) 데이터 소스(MVP: Notion, local)
 CREATE TABLE data_sources (
   idx            BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '데이터 소스 인스턴스 PK',
   workspace_idx  BIGINT NOT NULL                   COMMENT '소스가 귀속되는 워크스페이스 FK',
-  type           ENUM('notion') NOT NULL           COMMENT '소스 종류(MVP: notion 고정)',
+  type           ENUM('notion','local') NOT NULL           COMMENT '소스 종류(MVP: notion, local)',
   name           VARCHAR(200) NOT NULL             COMMENT '소스 표시명(구분용)',
   status         ENUM('connected','disconnected','error') NOT NULL DEFAULT 'connected' COMMENT '연결 상태',
   synced         DATETIME NULL                     COMMENT '마지막 성공 동기화 시각',
