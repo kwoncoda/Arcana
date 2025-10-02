@@ -1,5 +1,10 @@
 from typing import Optional
 
+# 노션 API 연결 전 
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import Depends, FastAPI, Query
 from sqlalchemy.orm import Session
 
