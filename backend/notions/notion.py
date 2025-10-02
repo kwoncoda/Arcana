@@ -18,8 +18,6 @@ from notion_client.errors import APIResponseError
 from pydantic import BaseModel
 from sqlalchemy import Column, DateTime, String, Text, BigInteger, JSON, select
 from sqlalchemy.orm import Session
-from enum import Enum as PyEnum
-
 from utils.db import Base
 
 # -----------------------
@@ -72,19 +70,6 @@ class NotionOauthCredentials(Base):
     created               = Column(DateTime, nullable=False, default=lambda: datetime.utcnow())
     updated               = Column(DateTime, nullable=False, default=lambda: datetime.utcnow())
     provider_payload      = Column(JSON, nullable=True)
-
-class WorkspaceType(PyEnum):
-    personal = "personal"
-    organization = "organization"
-
-class Workspace(Base):
-    __tablename__ = "workspaces"
-    idx = Column(BigInteger, primary_key=True, autoincrement=True)
-    type = Column(String(20), nullable=False)  # 'personal' / 'organization'
-    name = Column(String(200), nullable=False)
-    owner_user_idx = Column(BigInteger, nullable=True)      # personal일 때만
-    organization_idx = Column(BigInteger, nullable=True)    # organization일 때만
-    created = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 class DataSource(Base):
     __tablename__ = "data_sources"

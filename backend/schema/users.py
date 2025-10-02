@@ -9,6 +9,7 @@ from pydantic import BaseModel, EmailStr, StringConstraints, ConfigDict
 IdStr = Annotated[str, StringConstraints(strip_whitespace=True,max_length=255)]
 PasswordStr = Annotated[str, StringConstraints(max_length=128)]
 NicknameStr = Annotated[str, StringConstraints(strip_whitespace=True, max_length=100)]
+WorkspaceNameStr = Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)]
 
 class RegisterRequest(BaseModel):
     """회원 가입 시 클라이언트가 전달하는 필수 정보를 검증한다."""
@@ -16,6 +17,9 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: PasswordStr
     nickname: NicknameStr | None = None
+    type: Literal["personal", "organization"] = "personal"
+    organization_name: WorkspaceNameStr | None = None
+    workspace_name: WorkspaceNameStr | None = None
 
 class LoginRequest(BaseModel):
     """로그인 요청으로 전달되는 아이디와 비밀번호 형식을 검증한다."""
