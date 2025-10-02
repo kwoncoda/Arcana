@@ -19,6 +19,8 @@ from utils.db import Base, get_db
 
 PBKDF2_ITERATIONS = 390_000
 
+router = APIRouter(prefix="/users", tags=["users"])
+
 
 def _b64encode(raw: bytes) -> str:
     """PBKDF2 결과에서 생성된 바이트 데이터를 URL-safe Base64 문자열로 변환한다."""
@@ -76,7 +78,7 @@ class User(Base):
     last_login = Column(DateTime)
 
 
-router = APIRouter(prefix="/users", tags=["users"])
+
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -109,7 +111,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserRes
 
     if payload.type == "organization" and not payload.organization_name:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=462,
             detail="조직 이름을 입력해주세요.",
         )
 
