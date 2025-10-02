@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from schema.users import LoginRequest, LoginResponse, RegisterRequest, UserResponse
+from models import Membership, Organization, Workspace, WorkspaceType
 from utils.auth import create_access_token, create_refresh_token
 from utils.db import Base, get_db
 
@@ -106,6 +107,12 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserRes
                 detail="이미 사용 중인 닉네임입니다.",
             )
 
+    if payload.type == "organization" and not payload.organization_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="조직 이름을 입력해주세요.",
+        )
+
     user = User(
         id=payload.id,
         email=payload.email,
@@ -115,13 +122,64 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserRes
     )
 
     db.add(user)
+
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="이미 사용 중인 사용자 정보가 있습니다.",
+        )
+
+    workspace: Workspace
+
+    if payload.type == WorkspaceType.organization.value:
+        organization = Organization(name=payload.organization_name)
+        db.add(organization)
+        try:
+            db.flush()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="조직을 생성할 수 없습니다.",
+            )
+
+        membership = Membership(
+            organization_idx=organization.idx,
+            user_idx=user.idx,
+            role="member",
+        )
+        db.add(membership)
+
+        workspace_name = payload.workspace_name or organization.name
+        workspace = Workspace(
+            type=WorkspaceType.organization.value,
+            name=workspace_name,
+            organization_idx=organization.idx,
+        )
+    else:
+        workspace_name = (
+            payload.workspace_name
+            or payload.nickname
+            or f"{payload.id}'s workspace"
+        )
+        workspace = Workspace(
+            type=WorkspaceType.personal.value,
+            name=workspace_name,
+            owner_user_idx=user.idx,
+        )
+
+    db.add(workspace)
+
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="이미 사용 중인 사용자 정보가 있습니다.",
+            detail="회원가입 처리 중 오류가 발생했습니다.",
         )
 
     db.refresh(user)
