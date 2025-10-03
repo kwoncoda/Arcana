@@ -7,12 +7,12 @@ import os
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status, Response
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, String, select, exists
+from sqlalchemy import select, exists
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from schema.users import LoginRequest, LoginResponse, RegisterRequest
-from models import Membership, Organization, Workspace, WorkspaceType
+from models import Membership, Organization, Workspace, WorkspaceType, User
 from utils.auth import create_access_token, create_refresh_token
 from utils.db import Base, get_db
 
@@ -63,21 +63,6 @@ def verify_password(password: str, hashed: str) -> bool:
     expected_hash = _b64decode(hash_b64)
     test_hash = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations_int)
     return hmac.compare_digest(expected_hash, test_hash)
-
-
-class User(Base):
-    __tablename__ = "users"
-
-    idx = Column(BigInteger, primary_key=True, autoincrement=True)
-    id = Column(String(255), nullable=False, unique=True)
-    email = Column(String(255), nullable=False, unique=True)
-    nickname = Column(String(100), unique=True)
-    password_hash = Column(String(255), nullable=False)
-    active = Column(Boolean, nullable=False, default=True)
-    created = Column(DateTime, nullable=False, default=datetime.utcnow)
-    last_login = Column(DateTime)
-
-
 
 
 

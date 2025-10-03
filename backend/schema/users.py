@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, EmailStr, StringConstraints, ConfigDict
+from pydantic import BaseModel, EmailStr, StringConstraints
 
 # 공통 문자열 정의
 IdStr = Annotated[str, StringConstraints(strip_whitespace=True,max_length=255)]

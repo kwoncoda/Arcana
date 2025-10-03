@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import BigInteger, Column, DateTime, String
+from sqlalchemy import BigInteger, Column, DateTime, String, Boolean
 
 from utils.db import Base
 
@@ -28,6 +28,20 @@ class Workspace(Base):
     owner_user_idx = Column(BigInteger, nullable=True)
     organization_idx = Column(BigInteger, nullable=True)
     created = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class User(Base):
+    """유저 엔티티"""
+    __tablename__ = "users"
+
+    idx = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(String(255), nullable=False, unique=True)
+    email = Column(String(255), nullable=False, unique=True)
+    nickname = Column(String(100), unique=True)
+    password_hash = Column(String(255), nullable=False)
+    active = Column(Boolean, nullable=False, default=True)
+    created = Column(DateTime, nullable=False, default=datetime.utcnow)
+    last_login = Column(DateTime)
 
 
 class Organization(Base):
