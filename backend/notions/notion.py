@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from utils.db import Base
-from models import NotionOauthCredentials
+from models import NotionOauthCredentials, DataSource
 
 # -----------------------
 # 환경 변수 로드
@@ -127,6 +127,14 @@ def upsert_tokens(
         )
     )
 
+    if not row:
+        row = db.scalar(
+            select(NotionOauthCredentials).where(
+                NotionOauthCredentials.data_source_idx == data_source_idx,
+                NotionOauthCredentials.user_idx == user_idx,
+            )
+        )
+
     now_utc = datetime.utcnow()
     expires_at = (now_utc + timedelta(seconds=int(expires_in))) if expires_in else None
 
@@ -150,6 +158,8 @@ def upsert_tokens(
     else:
         row.user_idx = user_idx
         row.data_source_idx = data_source_idx
+        row.provider = provider
+        row.bot_id = bot_id
         row.provider_workspace_id = workspace_id or row.provider_workspace_id
         row.workspace_name = workspace_name or row.workspace_name
         row.workspace_icon = workspace_icon or row.workspace_icon
@@ -161,6 +171,10 @@ def upsert_tokens(
         row.provider_payload = data
 
     db.add(row)
+    data_source = db.scalar(select(DataSource).where(DataSource.idx == data_source_idx))
+    if data_source:
+        data_source.status = "connected"
+        db.add(data_source)
     db.commit()
     db.refresh(row)
     return row
