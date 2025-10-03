@@ -12,7 +12,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from schema.users import LoginRequest, LoginResponse, RegisterRequest
-from models import Membership, Organization, Workspace, WorkspaceType, User
+from models import (
+    Membership,
+    Organization,
+    Workspace,
+    WorkspaceType,
+    User,
+    DataSource,
+    NotionOauthCredentials,
+)
 from utils.auth import create_access_token, create_refresh_token
 from utils.db import Base, get_db
 
@@ -228,6 +236,63 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse
     
     nick = user.nickname
     
+    workspace = None
+    if user.type == WorkspaceType.personal.value:
+        workspace = db.scalar(
+            select(Workspace).where(
+                Workspace.type == WorkspaceType.personal.value,
+                Workspace.owner_user_idx == user.idx,
+            )
+        )
+    elif user.type == WorkspaceType.organization.value:
+        membership = db.scalar(
+            select(Membership)
+            .where(Membership.user_idx == user.idx)
+            .order_by(Membership.idx)
+            .limit(1)
+        )
+        if membership:
+            workspace = db.scalar(
+                select(Workspace).where(
+                    Workspace.type == WorkspaceType.organization.value,
+                    Workspace.organization_idx == membership.organization_idx,
+                )
+            )
+
+    if workspace:
+        data_source = db.scalar(
+            select(DataSource).where(
+                DataSource.workspace_idx == workspace.idx,
+                DataSource.type == "notion",
+            )
+        )
+        if not data_source:
+            data_source = DataSource(
+                workspace_idx=workspace.idx,
+                type="notion",
+                name="Notion",
+                status="disconnected",
+            )
+            db.add(data_source)
+            db.flush()
+
+        credential = db.scalar(
+            select(NotionOauthCredentials).where(
+                NotionOauthCredentials.data_source_idx == data_source.idx,
+                NotionOauthCredentials.user_idx == user.idx,
+            )
+        )
+        if not credential:
+            credential = NotionOauthCredentials(
+                user_idx=user.idx,
+                data_source_idx=data_source.idx,
+                provider="notion",
+                bot_id=f"pending-{data_source.idx}-{user.idx}",
+                token_type="bearer",
+                access_token="",
+            )
+            db.add(credential)
+
     try:
         user.last_login = datetime.utcnow()
         db.commit()
