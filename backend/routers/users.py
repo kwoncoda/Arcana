@@ -12,7 +12,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from schema.users import LoginRequest, LoginResponse, RegisterRequest
-from models import Membership, Organization, Workspace, WorkspaceType, User
+from models import (
+    Membership,
+    Organization,
+    Workspace,
+    WorkspaceType,
+    User,
+)
 from utils.auth import create_access_token, create_refresh_token
 from utils.db import Base, get_db
 
