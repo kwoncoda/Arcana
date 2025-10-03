@@ -39,6 +39,7 @@ class User(Base):
     email = Column(String(255), nullable=False, unique=True)
     nickname = Column(String(100), unique=True)
     password_hash = Column(String(255), nullable=False)
+    type = Column(String(20), nullable=False)
     active = Column(Boolean, nullable=False, default=True)
     created = Column(DateTime, nullable=False, default=datetime.utcnow)
     last_login = Column(DateTime)

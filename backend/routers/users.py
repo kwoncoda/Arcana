@@ -117,6 +117,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
         email=payload.email,
         nickname=payload.nickname,
         password_hash=hash_password(payload.password),
+        type=workspace_type,
         active=True,
     )
 
