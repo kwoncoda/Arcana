@@ -10,20 +10,19 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
-from dotenv import load_dotenv
 from fastapi import HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from notion_client import Client
 from notion_client.errors import APIResponseError
 from pydantic import BaseModel
-from sqlalchemy import Column, DateTime, String, Text, BigInteger, JSON, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from utils.db import Base
+from models import NotionOauthCredentials
 
 # -----------------------
 # 환경 변수 로드
 # -----------------------
-load_dotenv()
 CLIENT_ID = os.getenv("NOTION_CLIENT_ID")
 CLIENT_SECRET = os.getenv("NOTION_CLIENT_SECRET")
 REDIRECT_URI = os.getenv("NOTION_REDIRECT_URI")
@@ -49,37 +48,6 @@ def _b64url_decode(s: str) -> dict:
     raw = base64.urlsafe_b64decode(s + pad)
     return json.loads(raw)
 
-# -----------------------
-# DB 모델: notion_oauth_credentials (스키마에 맞춤)
-# -----------------------
-class NotionOauthCredentials(Base):
-    __tablename__ = "notion_oauth_credentials"
-
-    idx                   = Column(BigInteger, primary_key=True, autoincrement=True)
-    user_idx              = Column(BigInteger, nullable=False)         # FK: users.idx
-    data_source_idx       = Column(BigInteger, nullable=False)         # FK: data_sources.idx
-    provider              = Column(String(50), nullable=False, default="notion")
-    bot_id                = Column(String(100), nullable=False)
-    provider_workspace_id = Column(String(64), nullable=True)          # Notion workspace_id
-    workspace_name        = Column(String(255), nullable=True)
-    workspace_icon        = Column(String(1000), nullable=True)
-    token_type            = Column(String(20), nullable=False, default="bearer")
-    access_token          = Column(Text, nullable=False)
-    refresh_token         = Column(Text, nullable=True)
-    expires               = Column(DateTime, nullable=True)            # MySQL DATETIME (naive)
-    created               = Column(DateTime, nullable=False, default=lambda: datetime.utcnow())
-    updated               = Column(DateTime, nullable=False, default=lambda: datetime.utcnow())
-    provider_payload      = Column(JSON, nullable=True)
-
-class DataSource(Base):
-    __tablename__ = "data_sources"
-    idx = Column(BigInteger, primary_key=True, autoincrement=True)
-    workspace_idx = Column(BigInteger, nullable=False)  # FK: workspaces.idx
-    type = Column(String(20), nullable=False)           # 'notion'
-    name = Column(String(200), nullable=False)
-    status = Column(String(20), nullable=False, default="connected")  # connected/disconnected/error
-    synced = Column(DateTime, nullable=True)
-    created = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 # -----------------------
 # 유틸: Workspace ID 추출 (헤더 또는 쿼리)
@@ -312,9 +280,9 @@ def build_block_tree(client: Client, block_id: str) -> List[Dict[str, Any]]:
 # -----------------------
 # 라우트: OAuth 시작 (/login)
 # -----------------------
-async def login(user_idx: Optional[int] = None, data_source_idx: Optional[int] = None):
+async def login(user_idx: Optional[int] = None):
     """
-    테스트/초기 버전: 쿼리로 user_idx, data_source_idx를 받는다.
+    테스트/초기 버전: 쿼리로 user_idx를 받는다.
     예) /login?user_idx=1&data_source_idx=1
     """
     if user_idx is None or data_source_idx is None:

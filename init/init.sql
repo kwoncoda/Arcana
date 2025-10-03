@@ -8,6 +8,7 @@ CREATE TABLE users (
   email         VARCHAR(255) NOT NULL UNIQUE      COMMENT '이메일(로그인/알림/비밀번호 재설정)',
   nickname      VARCHAR(100) NOT NULL UNIQUE      COMMENT '표시 이름(닉네임)',
   password_hash VARCHAR(255) NOT NULL             COMMENT '비밀번호 해시(bcrypt/Argon2 등)',
+  type          ENUM('personal','organization') NOT NULL COMMENT '사용자 종류(personal/organization)',
   active        TINYINT(1) NOT NULL DEFAULT 1     COMMENT '계정 활성 여부(1=활성, 0=비활성/차단)',
   created       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '계정 생성 시각',
   last_login    DATETIME NULL                     COMMENT '마지막 로그인 시각'
