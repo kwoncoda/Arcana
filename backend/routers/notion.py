@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Tuple
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -66,7 +66,7 @@ def _resolve_workspace(db: Session, user: User) -> Workspace:
 
 def _ensure_notion_resources(
     db: Session, *, user: User, workspace: Workspace
-) -> Tuple[DataSource, NotionOauthCredentials]:
+):
     data_source = db.scalar(
         select(DataSource).where(
             DataSource.workspace_idx == workspace.idx,
@@ -106,12 +106,11 @@ def _ensure_notion_resources(
     db.commit()
     db.refresh(data_source)
     db.refresh(credential)
-    return data_source, credential
 
 
 @router.post(
     "/connect/ensure",
-    status_code=status.HTTP_200_OK,
+    status_code=status.HTTP_204_NO_CONTENT,
     summary="Notion 연동을 위한 데이터 소스를 준비합니다.",
 )
 def ensure_notion_connection(
@@ -134,11 +133,6 @@ def ensure_notion_connection(
             detail=str(exc),
         ) from exc
     workspace = _resolve_workspace(db, user)
-    data_source, credential = _ensure_notion_resources(db, user=user, workspace=workspace)
+    _ensure_notion_resources(db, user=user, workspace=workspace)
 
-    return {
-        "workspace_idx": workspace.idx,
-        "data_source_idx": data_source.idx,
-        "credential_idx": credential.idx,
-        "data_source_status": data_source.status,
-    }
+    return Response(status_code=204)

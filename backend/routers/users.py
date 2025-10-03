@@ -205,7 +205,10 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
         
     return Response(status_code=201)
 
+
 _DUMMY_HASH = hash_password("haha")
+
+
 @router.post(
     "/login",
     status_code=status.HTTP_200_OK,
