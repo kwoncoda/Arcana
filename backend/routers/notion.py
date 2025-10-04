@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Tuple
-
-from fastapi import APIRouter, Depends, Header, HTTPException, status, Response
+from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from dependencies import get_current_user
 from models import (
     DataSource,
     Membership,
@@ -16,7 +15,6 @@ from models import (
     Workspace,
     WorkspaceType,
 )
-from utils.auth import AuthorizationError, InvalidTokenError, get_user_from_token
 from utils.db import get_db
 
 
@@ -116,22 +114,9 @@ def _ensure_notion_resources(
 def ensure_notion_connection(
     *,
     db: Session = Depends(get_db),
-    authorization: str = Header(..., alias="Authorization"),
+    user: User = Depends(get_current_user),
 ):
     """로그인한 사용자의 워크스페이스에 Notion 데이터 소스와 자격 증명을 보장한다."""
-
-    try:
-        user = get_user_from_token(db, authorization)
-    except AuthorizationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(exc),
-        ) from exc
-    except InvalidTokenError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(exc),
-        ) from exc
     workspace = _resolve_workspace(db, user)
     _ensure_notion_resources(db, user=user, workspace=workspace)
 
