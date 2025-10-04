@@ -122,6 +122,7 @@ def _ensure_notion_resources(
     "/connect",
     status_code=status.HTTP_200_OK,
     summary="Notion 연동",
+    include_in_schema=False
 )
 def ensure_notion_connection(
     *,
@@ -139,7 +140,7 @@ def ensure_notion_connection(
     return {"authorize_url": url}
 
 
-@router.get("/oauth/callback", summary="Notion OAuth 콜백")
+@router.get("/oauth/callback", summary="Notion OAuth 콜백", include_in_schema=False)
 async def notion_oauth_callback(
     *,
     code: Optional[str] = None,
@@ -167,7 +168,4 @@ async def notion_oauth_callback(
 
     cred = apply_oauth_tokens(db, cred, token_json, mark_connected=True)
 
-    # 프론트랑 연동시 RedirectResponse를 사용해야함
-    return {
-        "message": "Notion 연동이 완료되었습니다.",
-    }
+    return Response(status_code=200)
