@@ -9,6 +9,7 @@ artifacts:
   - code: backend/routers/users.py
   - code: backend/schema/users.py
   - code: backend/utils/auth.py
+relates_to: ["US-001.3"]
 ---
 
 ## 목적

@@ -1,5 +1,3 @@
-"""공용 인증/인가 의존성을 정의합니다."""
-
 from __future__ import annotations
 
 from fastapi import Depends, HTTPException, Security, status

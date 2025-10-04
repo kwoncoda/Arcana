@@ -26,7 +26,7 @@ if not CLIENT_ID or not CLIENT_SECRET or not REDIRECT_URI:
 NOTION_AUTH_URL = "https://api.notion.com/v1/oauth/authorize"
 NOTION_TOKEN_URL = "https://api.notion.com/v1/oauth/token"
 
-# ---- In-memory state (운영에선 Redis 등 권장) ----
+# ---- In-memory state (redis로 바꿔야함) ----
 _STATE: dict[str, datetime] = {}
 _STATE_TTL = timedelta(minutes=10)
 
