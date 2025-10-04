@@ -131,14 +131,31 @@ def _decode_token(token: str) -> Dict[str, Any]:
     return payload
 
 
+def _ensure_token_type(payload: Dict[str, Any], *, expected: str) -> Dict[str, Any]:
+    token_type = payload.get("type")
+    if token_type != expected:
+        if expected == "access":
+            message = "액세스 토큰이 필요합니다."
+        elif expected == "refresh":
+            message = "리프레시 토큰이 필요합니다."
+        else:  # pragma: no cover - 현재 예상하지 않는 토큰 타입
+            message = "유효하지 않은 토큰입니다."
+        raise InvalidTokenError(message)
+    return payload
+
+
 def decode_access_token(token: str) -> Dict[str, Any]:
     """액세스 토큰을 검증하고 페이로드를 반환합니다."""
 
     payload = _decode_token(token)
-    token_type = payload.get("type")
-    if token_type != "access":
-        raise InvalidTokenError("액세스 토큰이 필요합니다.")
-    return payload
+    return _ensure_token_type(payload, expected="access")
+
+
+def decode_refresh_token(token: str) -> Dict[str, Any]:
+    """리프레시 토큰을 검증하고 페이로드를 반환합니다."""
+
+    payload = _decode_token(token)
+    return _ensure_token_type(payload, expected="refresh")
 
 
 def get_user_from_token(db: "Session", authorization: str) -> "User":
