@@ -7,13 +7,30 @@ import os
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status, Response
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, String, select, exists
+from sqlalchemy import select, exists
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from schema.users import LoginRequest, LoginResponse, RegisterRequest
-from models import Membership, Organization, Workspace, WorkspaceType
-from utils.auth import create_access_token, create_refresh_token
+from schema.users import (
+    LoginRequest,
+    LoginResponse,
+    RegisterRequest,
+    TokenRefreshRequest,
+    TokenRefreshResponse,
+)
+from models import (
+    Membership,
+    Organization,
+    Workspace,
+    WorkspaceType,
+    User,
+)
+from utils.auth import (
+    InvalidTokenError,
+    create_access_token,
+    create_refresh_token,
+    decode_refresh_token,
+)
 from utils.db import Base, get_db
 
 
@@ -63,21 +80,6 @@ def verify_password(password: str, hashed: str) -> bool:
     expected_hash = _b64decode(hash_b64)
     test_hash = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations_int)
     return hmac.compare_digest(expected_hash, test_hash)
-
-
-class User(Base):
-    __tablename__ = "users"
-
-    idx = Column(BigInteger, primary_key=True, autoincrement=True)
-    id = Column(String(255), nullable=False, unique=True)
-    email = Column(String(255), nullable=False, unique=True)
-    nickname = Column(String(100), unique=True)
-    password_hash = Column(String(255), nullable=False)
-    active = Column(Boolean, nullable=False, default=True)
-    created = Column(DateTime, nullable=False, default=datetime.utcnow)
-    last_login = Column(DateTime)
-
-
 
 
 
@@ -132,6 +134,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
         email=payload.email,
         nickname=payload.nickname,
         password_hash=hash_password(payload.password),
+        type=workspace_type,
         active=True,
     )
 
@@ -213,7 +216,10 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
         
     return Response(status_code=201)
 
+
 _DUMMY_HASH = hash_password("haha")
+
+
 @router.post(
     "/login",
     status_code=status.HTTP_200_OK,
@@ -232,7 +238,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse
     hashed = user.password_hash if user else _DUMMY_HASH
     pwd_ok = verify_password(payload.password, hashed)
 
-    # 3) 실패 처리 (권장: 동일한 응답으로 통일)
+    # 3) 실패 처리
     if not user or not pwd_ok or not user.active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -241,7 +247,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse
         )
     
     nick = user.nickname
-    
+
     try:
         user.last_login = datetime.utcnow()
         db.commit()
@@ -255,4 +261,57 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse
         access_token=access_token,
         refresh_token=refresh_token,
         nickname=nick
+    )
+
+
+@router.post(
+    "/token/refresh",
+    status_code=status.HTTP_200_OK,
+    response_model=TokenRefreshResponse,
+    responses={
+        200: {"description": "토큰 재발급 성공"},
+        401: {"description": "리프레시 토큰 검증 실패"},
+    })
+def refresh_tokens(
+    payload: TokenRefreshRequest,
+    db: Session = Depends(get_db),
+) -> TokenRefreshResponse:
+    """리프레시 토큰을 검증하고 새로운 토큰 쌍을 발급한다."""
+
+    try:
+        refresh_payload = decode_refresh_token(payload.refresh_token)
+    except InvalidTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(exc),
+        ) from exc
+
+    subject = refresh_payload.get("sub")
+    if subject is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="토큰에 사용자 정보가 없습니다.",
+        )
+
+    try:
+        user_idx = int(subject)
+    except (TypeError, ValueError) as exc:  # pragma: no cover - 방어적 코드
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="유효하지 않은 사용자 식별자입니다.",
+        ) from exc
+
+    user = db.scalar(select(User).where(User.idx == user_idx))
+    if not user or not user.active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="사용자를 찾을 수 없습니다.",
+        )
+
+    access_token = create_access_token(subject=str(user.idx))
+    refresh_token = create_refresh_token(subject=str(user.idx))
+
+    return TokenRefreshResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
     )

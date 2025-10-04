@@ -2,6 +2,8 @@ from fastapi import FastAPI
 
 from routers import notion, users
 
+from fastapi.middleware.cors import CORSMiddleware
+
 # swagger 페이지 소개
 SWAGGER_HEADERS = {
     "version": "1.0.0",
@@ -12,7 +14,7 @@ SWAGGER_HEADERS = {
     },
 }
 
-# FastAPI 초기화(CORS,Lifespan)
+# FastAPI 초기화
 app = FastAPI(
     title="Arcana Backend API",
     **SWAGGER_HEADERS,
@@ -22,7 +24,20 @@ app = FastAPI(
 app.include_router(users.router)
 app.include_router(notion.router)
 
-
+#api설정값
+app.add_middleware(
+    CORSMiddleware,
+    # 허용 ip
+    #allow_origins=origins,
+    #일단 열어둠
+    allow_origins=["*"],
+    # 인증, 쿠키
+    #allow_credentials=True,
+    # 허용 메소드
+    allow_methods=["*"],
+    # 허용 헤더
+    allow_headers=["*"],  
+)
 
 
 # 공공 API

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <title>Connect Notion</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 24px; }
+    input, button { font-size: 16px; padding: 8px; }
+    #log { white-space: pre-wrap; background: #f6f8fa; padding: 12px; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Notion 연동 테스트</h1>
+
+  <p>JWT Bearer 토큰을 아래에 붙여넣고 “연동 시작”을 누르세요.</p>
+  <input id="token" type="text" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." style="width: 100%; max-width: 720px;" />
+  <div style="height:12px"></div>
+  <button id="start">연동 시작</button>
+
+  <h3>로그</h3>
+  <div id="log"></div>
+
+  <script>
+    const API_BASE = "http://localhost:8000/api"; // Nginx/포트 구성에 맞게 수정
+
+    const log = (msg) => {
+      const el = document.getElementById('log');
+      el.textContent += (msg + "\n");
+    };
+
+    document.getElementById('start').addEventListener('click', async () => {
+      const token = document.getElementById('token').value.trim();
+      if (!token) {
+        alert('JWT 토큰을 입력하세요.');
+        return;
+      }
+      log("요청: POST /notion/connect");
+
+      try {
+        const res = await fetch(`${API_BASE}/notion/connect`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          },
+          // 인증 쿠키 쓰는 방식이면: credentials: 'include'
+          credentials: 'omit',
+          body: '{}'
+        });
+
+        if (!res.ok) {
+          const text = await res.text();
+          log(`응답 오류: ${res.status}\n${text}`);
+          return;
+        }
+
+        const data = await res.json();
+        const authorizeUrl = data.authorize_url;
+        log("authorize_url 받음 → 브라우저 네비게이션으로 이동");
+        alert(authorizeUrl)
+        window.location.href = authorizeUrl; // ← 이게 핵심 (CORS 우회)
+      } catch (e) {
+        log("네트워크 오류: " + (e && e.message ? e.message : e));
+      }
+    });
+  </script>
+</body>
+</html>
