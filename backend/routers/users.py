@@ -11,7 +11,13 @@ from sqlalchemy import select, exists
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from schema.users import LoginRequest, LoginResponse, RegisterRequest
+from schema.users import (
+    LoginRequest,
+    LoginResponse,
+    RegisterRequest,
+    TokenRefreshRequest,
+    TokenRefreshResponse,
+)
 from models import (
     Membership,
     Organization,
@@ -19,7 +25,12 @@ from models import (
     WorkspaceType,
     User,
 )
-from utils.auth import create_access_token, create_refresh_token
+from utils.auth import (
+    InvalidTokenError,
+    create_access_token,
+    create_refresh_token,
+    decode_refresh_token,
+)
 from utils.db import Base, get_db
 
 
@@ -250,4 +261,57 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse
         access_token=access_token,
         refresh_token=refresh_token,
         nickname=nick
+    )
+
+
+@router.post(
+    "/token/refresh",
+    status_code=status.HTTP_200_OK,
+    response_model=TokenRefreshResponse,
+    responses={
+        200: {"description": "토큰 재발급 성공"},
+        401: {"description": "리프레시 토큰 검증 실패"},
+    })
+def refresh_tokens(
+    payload: TokenRefreshRequest,
+    db: Session = Depends(get_db),
+) -> TokenRefreshResponse:
+    """리프레시 토큰을 검증하고 새로운 토큰 쌍을 발급한다."""
+
+    try:
+        refresh_payload = decode_refresh_token(payload.refresh_token)
+    except InvalidTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(exc),
+        ) from exc
+
+    subject = refresh_payload.get("sub")
+    if subject is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="토큰에 사용자 정보가 없습니다.",
+        )
+
+    try:
+        user_idx = int(subject)
+    except (TypeError, ValueError) as exc:  # pragma: no cover - 방어적 코드
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="유효하지 않은 사용자 식별자입니다.",
+        ) from exc
+
+    user = db.scalar(select(User).where(User.idx == user_idx))
+    if not user or not user.active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="사용자를 찾을 수 없습니다.",
+        )
+
+    access_token = create_access_token(subject=str(user.idx))
+    refresh_token = create_refresh_token(subject=str(user.idx))
+
+    return TokenRefreshResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
     )
