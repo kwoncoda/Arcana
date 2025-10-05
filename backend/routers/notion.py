@@ -22,14 +22,15 @@ from models import (
 )
 from utils.db import get_db
 
-from backend.notions.notionAuth import (
+from notions.notionAuth import (
     build_authorize_url,
     make_state,
     verify_state,
     exchange_code_for_tokens,
     apply_oauth_tokens,
 )
-from backend.notions import (
+
+from notions import (
     pull_all_shared_page_text,  # 노션 페이지 원본 텍스트를 수집하는 헬퍼 임포트 주석
     build_jsonl_records_from_pages,  # 페이지 데이터를 JSONL 레코드로 변환하는 헬퍼 임포트 주석
     build_documents_from_records,  # JSONL 레코드를 LangChain 문서로 변환하는 헬퍼 임포트 주석
@@ -241,7 +242,7 @@ async def pull_all_pages(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Notion 데이터 수집 중 오류가 발생했습니다: {exc}",
         ) from exc
-
+        
     workspace_metadata = {  # 워크스페이스 정보를 문서 메타데이터로 포함하기 위한 딕셔너리 생성 주석
         "workspace_idx": workspace.idx,  # 워크스페이스 고유 식별자 저장 주석
         "workspace_type": workspace.type,  # 워크스페이스 유형 저장 주석
