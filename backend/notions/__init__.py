@@ -12,6 +12,11 @@ from .notionAuth import (
     ensure_valid_access_token,
 )
 from .notionPull import pull_all_shared_page_text, pull_page_text
+from .notionPreprocess import (
+    build_block_records,
+    preprocess_to_jsonl,
+    write_jsonl,
+)
 
 __all__ = [
     "build_authorize_url",
@@ -25,4 +30,7 @@ __all__ = [
     "ensure_valid_access_token",
     "pull_page_text",
     "pull_all_shared_page_text",
+    "build_block_records",
+    "preprocess_to_jsonl",
+    "write_jsonl",
 ]
