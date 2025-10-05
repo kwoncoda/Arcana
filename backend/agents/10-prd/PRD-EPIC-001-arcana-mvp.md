@@ -6,7 +6,6 @@ status: ready
 owner: product
 updated: 2025-09-26
 links:
-stories: [US-001.1, US-001.2, US-001.3, US-001.4]
 ---
 # Arcana MVP — PRD
 
@@ -36,13 +35,14 @@ Arcana는 **검색→맥락 합성→문서 생성**을 하나의 흐름으로 �
 
 ## B. 데이터 모델(요약)
 - organizations(idx, name, created)
-- users(idx, email, id, username, password_hash, active, created, last_login)
+- users(idx, email, id, username, password_hash, type, active, created, last_login)
 - memberships(idx, user_idx, org_idx, role, created)
-- data_sources(idx, org_idx, type='notion', connected, created, updated)
-- notion_credentials(idx, data_source_idx, access_token_enc, ...)
-- documents(idx, org_idx, source_idx, external_id, title, url, last_synced, created)
+- data_sources(idx, org_idx, type='notion|local', name, status, synced, created)
+- notion_credentials(idx, user_idx, data_source_idx, provider, bot_id, provider_workspace_id, workspace_name, workspace_icon, token_type, access_token_enc, refresh_token_enc, expires, created, updated, provider_payload)
+- documents(idx, org_idx, data_source_idx, external_id, title, url, last_edited_time, last_synced, created)
 - chunks(idx, doc_idx, ord, text, token_count, created)
-- embeddings_index(idx, org_idx, chunk_idx, vector_id, created)
+- embeddings_index(idx, org_idx, chunk_idx, vector_id, created, updated)
+- notion_sync_state(idx, data_source_idx, last_full_sync, since, next_cursor, rate_limited_until, created, updated)
 
 ## C. 비기능 요구(NFR)
 - 성능: 검색 p50≤2.5s/p95≤6s

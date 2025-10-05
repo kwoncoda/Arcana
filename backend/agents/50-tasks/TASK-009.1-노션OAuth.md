@@ -7,7 +7,7 @@ owner: backend
 updated: 2025-10-05
 artifacts:
   - code: /backend/routers/notion.py
-  - code: /backend/notions/notion.py
+  - code: /backend/notions/notionAuth.py
   - code: /backend/models/entities.py
   - code: /backend/pyproject.toml
 relates_to: ["US-002.1"]

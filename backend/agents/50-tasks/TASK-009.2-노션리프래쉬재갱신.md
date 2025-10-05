@@ -5,7 +5,7 @@ status: done
 title: "Notion OAuth 토큰 리프레시 유틸 구현"
 updated: 2025-02-14
 artifacts:
-  - code: backend/notions/notion.py
+  - code: backend/notions/notionAuth.py
   - code: backend/notions/__init__.py
 relates_to: ["US-002.2"]
 ---
@@ -26,7 +26,7 @@ relates_to: ["US-002.2"]
 - `ensure_valid_access_token`은 호출부에서 간단하게 사용할 수 있는 파사드로, 토큰 만료 여부를 확인한 뒤 필요한 경우 한 번만 재발급을 수행한다.
 
 ## 산출물
-- `backend/notions/notion.py`
+- `backend/notions/notionAuth.py`
   - 만료 감지, 재발급, 워크스페이스별 자격 증명 조회 유틸이 추가됐다.
 - `backend/notions/__init__.py`
   - 신규 헬퍼들을 export해 라우터나 서비스 모듈이 직접 import할 수 있다.
