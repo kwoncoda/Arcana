@@ -11,6 +11,7 @@ from .notionAuth import (
     refresh_access_token,
     ensure_valid_access_token,
 )
+from .notionPull import pull_all_shared_page_text, pull_page_text
 
 __all__ = [
     "build_authorize_url",
@@ -22,4 +23,6 @@ __all__ = [
     "get_credential_by_workspace_id",
     "refresh_access_token",
     "ensure_valid_access_token",
+    "pull_page_text",
+    "pull_all_shared_page_text",
 ]

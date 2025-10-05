@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status, Response
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from notion_client.errors import APIResponseError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -17,8 +20,6 @@ from models import (
 )
 from utils.db import get_db
 
-from fastapi.responses import RedirectResponse
-from typing import Optional
 from backend.notions.notionAuth import (
     build_authorize_url,
     make_state,
@@ -26,6 +27,7 @@ from backend.notions.notionAuth import (
     exchange_code_for_tokens,
     apply_oauth_tokens,
 )
+from backend.notions import pull_all_shared_page_text
 
 
 router = APIRouter(prefix="/notion", tags=["notion"])
@@ -169,3 +171,65 @@ async def notion_oauth_callback(
     cred = apply_oauth_tokens(db, cred, token_json, mark_connected=True)
 
     return Response(status_code=200)
+
+
+def _get_connected_credential(
+    db: Session, *, user: User, workspace: Workspace
+) -> NotionOauthCredentials:
+    data_source = db.scalar(
+        select(DataSource).where(
+            DataSource.workspace_idx == workspace.idx,
+            DataSource.type == "notion",
+        )
+    )
+
+    if not data_source or data_source.status != "connected":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Notion 연동이 필요합니다.",
+        )
+
+    credential = db.scalar(
+        select(NotionOauthCredentials).where(
+            NotionOauthCredentials.data_source_idx == data_source.idx,
+            NotionOauthCredentials.user_idx == user.idx,
+        )
+    )
+
+    if not credential or not credential.access_token:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Notion 연동 토큰을 찾을 수 없습니다.",
+        )
+
+    return credential
+
+
+@router.post(
+    "/pages/pull",
+    summary="Notion 공유 페이지 전체 텍스트 수집",
+)
+async def pull_all_pages(
+    *,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    workspace = _resolve_workspace(db, user)
+    credential = _get_connected_credential(db, user=user, workspace=workspace)
+
+    try:
+        payload = await pull_all_shared_page_text(db, credential)
+    except APIResponseError as exc:
+        status_code = exc.status or status.HTTP_502_BAD_GATEWAY
+        detail = getattr(exc, "message", str(exc))
+        raise HTTPException(
+            status_code=status_code,
+            detail=f"Notion API 호출 실패: {detail}",
+        ) from exc
+    except Exception as exc:  # pragma: no cover - defensive clause
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Notion 데이터 수집 중 오류가 발생했습니다: {exc}",
+        ) from exc
+
+    return payload
