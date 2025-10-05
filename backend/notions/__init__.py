@@ -12,6 +12,11 @@ from .notionAuth import (
     ensure_valid_access_token,
 )
 from .notionPull import pull_all_shared_page_text, pull_page_text
+from .ragTransform import (  # 노션 페이지 전처리 및 문서화를 담당하는 헬퍼들을 임포트하는 주석
+    build_jsonl_records_from_pages,  # JSONL 레코드를 생성하는 함수를 임포트하는 주석
+    build_documents_from_records,  # JSONL 레코드를 LangChain 문서로 변환하는 함수를 임포트하는 주석
+    build_documents_from_pages,  # 페이지에서 직접 LangChain 문서를 생성하는 함수를 임포트하는 주석
+)
 
 __all__ = [
     "build_authorize_url",
@@ -25,4 +30,7 @@ __all__ = [
     "ensure_valid_access_token",
     "pull_page_text",
     "pull_all_shared_page_text",
+    "build_jsonl_records_from_pages",
+    "build_documents_from_records",
+    "build_documents_from_pages",
 ]
