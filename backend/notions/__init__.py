@@ -1,6 +1,6 @@
 """Notion 관련 헬퍼 함수를 노출합니다."""
 
-from .notion import (
+from .notionAuth import (
     build_authorize_url,
     make_state,
     verify_state,

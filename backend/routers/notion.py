@@ -19,7 +19,7 @@ from utils.db import get_db
 
 from fastapi.responses import RedirectResponse
 from typing import Optional
-from notions.notion import (
+from backend.notions.notionAuth import (
     build_authorize_url,
     make_state,
     verify_state,
