@@ -20,14 +20,14 @@ from models import (
 )
 from utils.db import get_db
 
-from backend.notions.notionAuth import (
+from notions.notionAuth import (
     build_authorize_url,
     make_state,
     verify_state,
     exchange_code_for_tokens,
     apply_oauth_tokens,
 )
-from backend.notions import pull_all_shared_page_text
+from notions import pull_all_shared_page_text
 
 
 router = APIRouter(prefix="/notion", tags=["notion"])
