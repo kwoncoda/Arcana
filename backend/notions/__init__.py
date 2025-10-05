@@ -6,6 +6,10 @@ from .notion import (
     verify_state,
     exchange_code_for_tokens,
     apply_oauth_tokens,
+    should_refresh_token,
+    get_credential_by_workspace_id,
+    refresh_access_token,
+    ensure_valid_access_token,
 )
 
 __all__ = [
@@ -14,4 +18,8 @@ __all__ = [
     "verify_state",
     "exchange_code_for_tokens",
     "apply_oauth_tokens",
+    "should_refresh_token",
+    "get_credential_by_workspace_id",
+    "refresh_access_token",
+    "ensure_valid_access_token",
 ]
