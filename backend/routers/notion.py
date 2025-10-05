@@ -27,7 +27,7 @@ from notions.notionAuth import (
     exchange_code_for_tokens,
     apply_oauth_tokens,
 )
-from notions import pull_all_shared_page_text
+from notions.notionPull import pull_all_shared_page_text
 
 
 router = APIRouter(prefix="/notion", tags=["notion"])
@@ -231,5 +231,6 @@ async def pull_all_pages(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Notion 데이터 수집 중 오류가 발생했습니다: {exc}",
         ) from exc
+        
 
     return payload
