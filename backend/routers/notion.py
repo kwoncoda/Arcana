@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import json  # JSON 직렬화를 위해 json 모듈을 임포트하는 주석
-import logging  # 로깅 기능 사용을 위한 logging 모듈 임포트 주석
+import json  
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -41,8 +40,8 @@ from notions.ragTransform import (
 
 from rag.chroma import ChromaRAGService  # Chroma 기반 RAG 서비스를 임포트하는 주석
 
-
-logger = logging.getLogger("arcana")  # 애플리케이션 기본 로거를 참조하여 라우터 로거를 구성하는 주석
+import logging
+logger = logging.getLogger("arcana") 
 
 router = APIRouter(prefix="/notion", tags=["notion"])
 rag_service = ChromaRAGService()  # 노션 데이터를 RAG 인덱스에 적재하기 위한 서비스 인스턴스 생성 주석

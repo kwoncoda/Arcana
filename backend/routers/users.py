@@ -34,10 +34,12 @@ from utils.auth import (
 from utils.db import Base, get_db
 
 
-PBKDF2_ITERATIONS = 390_000
+import logging
+logger = logging.getLogger("arcana") 
 
 router = APIRouter(prefix="/users", tags=["users"])
 
+PBKDF2_ITERATIONS = 390_000
 
 def _b64encode(raw: bytes) -> str:
     """PBKDF2 결과에서 생성된 바이트 데이터를 URL-safe Base64 문자열로 변환한다."""
