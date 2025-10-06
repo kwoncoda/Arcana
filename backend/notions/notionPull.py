@@ -231,6 +231,7 @@ async def pull_all_shared_page_text(
                     "page_id": page_id,
                     "title": _extract_page_title(page),
                     "last_edited_time": page.get("last_edited_time"),
+                    "url": page.get("url"),  # 페이지 URL을 포함하여 후속 단계에서 근거 링크로 활용하는 주석
                     "blocks": [block.to_dict() for block in blocks],
                 }
             )
