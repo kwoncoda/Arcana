@@ -81,6 +81,16 @@ def build_jsonl_records_from_pages(  # 페이지 데이터를 JSONL 레코드로
 
         text_lines = _combine_page_text(page.get("blocks", []))  # 페이지 블록에서 텍스트 라인 추출 주석
         if not text_lines:  # 텍스트가 존재하지 않는 경우 확인 주석
+
+            record = {  # 내용이 비어 있는 페이지도 추적하기 위한 레코드 생성 주석
+                "page_id": page_id,  # 페이지 식별자를 레코드에 저장 주석
+                "title": title,  # 페이지 제목을 레코드에 저장 주석
+                "last_edited_time": last_edited_time,  # 페이지 수정 시각을 레코드에 저장 주석
+                "text": "",  # 비어 있는 텍스트를 명시적으로 기록 주석
+                "page_url": page_url,  # 페이지 URL을 레코드에 저장 주석
+            }
+            records.append(record)  # 비어 있는 페이지 레코드를 결과 리스트에 추가 주석
+
             continue  # 다음 페이지로 건너뛰기 주석
 
         full_text = "\n".join(text_lines)  # 라인들을 줄바꿈으로 결합해 전체 텍스트 생성 주석
@@ -102,6 +112,10 @@ def build_documents_from_records(  # JSONL 레코드를 LangChain 문서로 변�
 ) -> List[Document]:  # LangChain 문서 리스트 반환을 명시하는 주석
     documents: List[Document] = []  # 결과 문서 리스트 초기화 주석
     for index, record in enumerate(records):  # 각 레코드를 순회하며 인덱스를 추적하는 루프 주석
+        text = record.get("text", "")  # 레코드에서 텍스트 내용을 추출하는 주석
+        if not text:  # 비어 있는 텍스트 청크인지 확인하는 주석
+            continue  # 비어 있는 청크는 RAG 문서로 변환하지 않고 건너뛰는 주석
+
         metadata = deepcopy(workspace_metadata)  # 워크스페이스 메타데이터를 복제해 독립본 생성 주석
         metadata.update(  # 페이지 및 청크 정보를 메타데이터에 병합하는 주석
             {
@@ -113,7 +127,7 @@ def build_documents_from_records(  # JSONL 레코드를 LangChain 문서로 변�
                 "chunk_index": index,  # 청크 인덱스를 메타데이터에 저장 주석
             }
         )
-        document = Document(page_content=record.get("text", ""), metadata=metadata)  # 레코드 텍스트와 메타데이터로 문서 생성 주석
+        document = Document(page_content=text, metadata=metadata)  # 레코드 텍스트와 메타데이터로 문서 생성 주석
         documents.append(document)  # 생성된 문서를 결과 리스트에 추가 주석
     return documents  # 생성된 문서 리스트 반환 주석
 
