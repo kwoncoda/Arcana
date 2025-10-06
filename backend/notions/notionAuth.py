@@ -8,7 +8,7 @@ import json
 import base64
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import httpx
 from sqlalchemy import select
@@ -25,6 +25,8 @@ if not CLIENT_ID or not CLIENT_SECRET or not REDIRECT_URI:
 
 NOTION_AUTH_URL = "https://api.notion.com/v1/oauth/authorize"
 NOTION_TOKEN_URL = "https://api.notion.com/v1/oauth/token"
+
+_REFRESH_SAFETY_WINDOW = timedelta(seconds=90)
 
 # ---- In-memory state (redis로 바꿔야함) ----
 _STATE: dict[str, datetime] = {}
@@ -100,7 +102,12 @@ def apply_oauth_tokens(
         except Exception:
             pass
     cred.updated = now
-    cred.provider_payload = data
+    previous_payload = cred.provider_payload or {}
+    try:
+        merged_payload = {**previous_payload, **data}
+    except TypeError:
+        merged_payload = data
+    cred.provider_payload = merged_payload
     db.add(cred)
 
     if mark_connected:
@@ -111,4 +118,81 @@ def apply_oauth_tokens(
 
     db.commit()
     db.refresh(cred)
+    return cred
+
+
+def _normalize_expires(expires: Optional[datetime]) -> Optional[datetime]:
+    """Convert naive datetimes to UTC-aware ones for safe comparisons."""
+
+    if expires is None:
+        return None
+    if expires.tzinfo is None:
+        return expires.replace(tzinfo=timezone.utc)
+    return expires.astimezone(timezone.utc)
+
+
+def should_refresh_token(cred: NotionOauthCredentials) -> bool:
+    """Return True if access token is missing or near expiry."""
+
+    if not cred.access_token:
+        return True
+
+    expires = _normalize_expires(cred.expires)
+    if not expires:
+        return False
+
+    return expires <= datetime.now(timezone.utc) + _REFRESH_SAFETY_WINDOW
+
+
+def get_credential_by_workspace_id(
+    db: Session, *, workspace_id: str
+) -> NotionOauthCredentials:
+    """Fetch stored credentials for a given Notion workspace."""
+
+    credential = db.scalar(
+        select(NotionOauthCredentials).where(
+            NotionOauthCredentials.provider == "notion",
+            NotionOauthCredentials.provider_workspace_id == workspace_id,
+        )
+    )
+
+    if not credential:
+        raise LookupError("해당 workspace_id에 대한 Notion 자격증명이 없습니다.")
+
+    return credential
+
+
+async def refresh_access_token(
+    db: Session, cred: NotionOauthCredentials
+) -> NotionOauthCredentials:
+    """Re-issue an access token using the stored refresh token."""
+
+    if not cred.refresh_token:
+        raise RuntimeError("리프레시 토큰이 없어 access_token을 재발급할 수 없습니다.")
+
+    auth = httpx.BasicAuth(CLIENT_ID, CLIENT_SECRET)
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            NOTION_TOKEN_URL,
+            auth=auth,
+            json={
+                "grant_type": "refresh_token",
+                "refresh_token": cred.refresh_token,
+            },
+        )
+
+    if resp.status_code != 200:
+        raise RuntimeError(f"Notion 토큰 재발급 실패: {resp.text}")
+
+    payload = resp.json()
+    return apply_oauth_tokens(db, cred, payload, mark_connected=False)
+
+
+async def ensure_valid_access_token(
+    db: Session, cred: NotionOauthCredentials
+) -> NotionOauthCredentials:
+    """Return credentials, refreshing the access token once if needed."""
+
+    if should_refresh_token(cred):
+        cred = await refresh_access_token(db, cred)
     return cred

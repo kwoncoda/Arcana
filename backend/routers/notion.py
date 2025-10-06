@@ -2,24 +2,29 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status, Response
+import json  
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from notion_client.errors import APIResponseError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from dependencies import get_current_user
 from models import (
+    DEFAULT_RAG_INDEX_NAME,
     DataSource,
     Membership,
     NotionOauthCredentials,
+    RagIndex,
     User,
     Workspace,
     WorkspaceType,
 )
 from utils.db import get_db
+from utils.workspace_storage import ensure_workspace_storage
 
-from fastapi.responses import RedirectResponse
-from typing import Optional
-from notions.notion import (
+from notions.notionAuth import (
     build_authorize_url,
     make_state,
     verify_state,
@@ -27,8 +32,22 @@ from notions.notion import (
     apply_oauth_tokens,
 )
 
+from notions.notionPull import (
+    pull_all_shared_page_text,  # 노션 페이지 원본 텍스트를 수집하는 헬퍼 임포트 주석
+)
+
+from notions.ragTransform import (
+    build_jsonl_records_from_pages,  # 페이지 데이터를 JSONL 레코드로 변환하는 헬퍼 임포트 주석
+    build_documents_from_records,  # JSONL 레코드를 LangChain 문서로 변환하는 헬퍼 임포트 주석
+)
+
+from rag.chroma import ChromaRAGService  # Chroma 기반 RAG 서비스를 임포트하는 주석
+
+import logging
+logger = logging.getLogger("arcana") 
 
 router = APIRouter(prefix="/notion", tags=["notion"])
+rag_service = ChromaRAGService()  # 노션 데이터를 RAG 인덱스에 적재하기 위한 서비스 인스턴스 생성 주석
 
 
 def _resolve_workspace(db: Session, user: User) -> Workspace:
@@ -114,7 +133,7 @@ def _ensure_notion_resources(
     db.commit()
     db.refresh(data_source)
     db.refresh(credential)
-    
+
     return credential
 
 
@@ -132,11 +151,11 @@ def ensure_notion_connection(
     """로그인한 사용자의 워크스페이스에 Notion 데이터 소스와 자격 증명을 보장한다."""
     workspace = _resolve_workspace(db, user)
     credential = _ensure_notion_resources(db, user=user, workspace=workspace)
-    
+
     # state 생성 후 Notion 동의 화면으로 리디렉션
     state = make_state(cred_idx=credential.idx, user_idx=user.idx)
     url = build_authorize_url(state)
-    
+
     return {"authorize_url": url}
 
 
@@ -169,3 +188,125 @@ async def notion_oauth_callback(
     cred = apply_oauth_tokens(db, cred, token_json, mark_connected=True)
 
     return Response(status_code=200)
+
+
+def _get_connected_credential(
+    db: Session, *, user: User, workspace: Workspace
+) -> NotionOauthCredentials:
+    data_source = db.scalar(
+        select(DataSource).where(
+            DataSource.workspace_idx == workspace.idx,
+            DataSource.type == "notion",
+        )
+    )
+
+    if not data_source or data_source.status != "connected":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Notion 연동이 필요합니다.",
+        )
+
+    credential = db.scalar(
+        select(NotionOauthCredentials).where(
+            NotionOauthCredentials.data_source_idx == data_source.idx,
+            NotionOauthCredentials.user_idx == user.idx,
+        )
+    )
+
+    if not credential or not credential.access_token:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Notion 연동 토큰을 찾을 수 없습니다.",
+        )
+
+    return credential
+
+
+@router.post(
+    "/pages/pull",
+    summary="Notion 공유 페이지 전체 텍스트 수집",
+)
+async def pull_all_pages(
+    *,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    workspace = _resolve_workspace(db, user)
+    credential = _get_connected_credential(db, user=user, workspace=workspace)
+
+    try:
+        payload = await pull_all_shared_page_text(db, credential)
+    except APIResponseError as exc:
+        status_code = exc.status or status.HTTP_502_BAD_GATEWAY
+        detail = getattr(exc, "message", str(exc))
+        raise HTTPException(
+            status_code=status_code,
+            detail=f"Notion API 호출 실패: {detail}",
+        ) from exc
+    except Exception as exc:  # pragma: no cover - defensive clause
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Notion 데이터 수집 중 오류가 발생했습니다: {exc}",
+        ) from exc
+        
+    workspace_metadata = {  # 워크스페이스 정보를 문서 메타데이터로 포함하기 위한 딕셔너리 생성 주석
+        "workspace_idx": workspace.idx,  # 워크스페이스 고유 식별자 저장 주석
+        "workspace_type": workspace.type,  # 워크스페이스 유형 저장 주석
+        "workspace_name": workspace.name,  # 워크스페이스 이름 저장 주석
+    }
+    jsonl_records = build_jsonl_records_from_pages(payload.get("pages", []))  # 수집된 페이지를 JSONL 레코드로 전처리하는 주석
+    documents = build_documents_from_records(jsonl_records, workspace_metadata)  # 전처리된 레코드를 LangChain 문서로 변환하는 주석
+    jsonl_lines = [json.dumps(record, ensure_ascii=False) for record in jsonl_records]  # 레코드를 JSON 문자열로 직렬화하는 주석
+    jsonl_text = "\n".join(jsonl_lines)  # JSONL 텍스트를 생성하기 위해 줄바꿈으로 결합하는 주석
+
+    if logger.isEnabledFor(logging.DEBUG):  # 디버그 레벨에서만 전처리 결과를 기록하도록 조건을 설정하는 주석
+        logger.debug("Processed Notion JSONL payload: %s", jsonl_text)  # 최종 JSONL 텍스트를 디버그 로그로 출력하는 주석
+
+    try:
+        ingested_count = rag_service.upsert_documents(workspace.idx, workspace.name, documents)  # 변환된 문서를 Chroma에 적재하고 개수 반환 주석
+    except RuntimeError as exc:  # Azure OpenAI 구성 누락 등 구성 오류 처리 주석
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,  # 내부 서버 오류 응답 코드 지정 주석
+            detail=f"RAG 적재 실패: {exc}",  # 실패 사유를 상세 메시지로 전달 주석
+        ) from exc
+
+    storage_path = ensure_workspace_storage(workspace.name)
+    rag_index = db.scalar(
+        select(RagIndex).where(
+            RagIndex.workspace_idx == workspace.idx,
+            RagIndex.name == DEFAULT_RAG_INDEX_NAME,
+        )
+    )
+
+    if not rag_index:
+        rag_index = RagIndex(
+            workspace_idx=workspace.idx,
+            name=DEFAULT_RAG_INDEX_NAME,
+            index_type="chroma",
+            storage_uri=str(storage_path),
+            status="ready",
+        )
+        db.add(rag_index)
+    else:
+        rag_index.storage_uri = str(storage_path)
+        rag_index.index_type = "chroma"
+
+    rag_index.object_count = int(payload.get("count") or 0)
+    rag_index.vector_count = int(ingested_count)
+    rag_index.status = "ready"
+
+    try:
+        db.commit()
+    except Exception as exc:  # pragma: no cover - defensive clause
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="RAG 인덱스 메타데이터를 갱신하는 중 오류가 발생했습니다.",
+        ) from exc
+
+    return {  # API 응답 페이로드를 구성하는 주석
+        **payload,  # 원본 Notion 수집 결과를 포함하는 주석
+        "jsonl_records": jsonl_records,  # 전처리된 JSONL 레코드 리스트를 포함하는 주석
+        "jsonl_text": jsonl_text,  # 직렬화된 JSONL 문자열을 포함하는 주석
+        "ingested_chunks": ingested_count,  # Chroma에 적재된 청크 수를 포함하는 주석
+    }

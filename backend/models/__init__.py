@@ -3,6 +3,7 @@
 from .entities import (
     Membership,
     Organization,
+    RagIndex,
     Workspace,
     WorkspaceType,
     User,
@@ -12,12 +13,17 @@ from .entities import (
 
 
 
+DEFAULT_RAG_INDEX_NAME = "default"
+
+
 __all__ = [
     "Membership",
     "Organization",
+    "RagIndex",
     "Workspace",
     "WorkspaceType",
     "User",
     "NotionOauthCredentials",
     "DataSource",
+    "DEFAULT_RAG_INDEX_NAME",
 ]

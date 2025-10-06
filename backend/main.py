@@ -1,8 +1,22 @@
+import logging
+
 from fastapi import FastAPI
 
 from routers import notion, users
 
 from fastapi.middleware.cors import CORSMiddleware
+
+
+logging.basicConfig(
+    level=logging.DEBUG,                        
+    format="%(asctime)s %(levelname)s %(name)s :: %(message)s",
+    force=True,           # uvicorn 핸들러 삭제
+)
+
+logger = logging.getLogger("arcana")  
+
+# logging.getLogger("httpx").setLevel(logging.WARNING)
+# logging.getLogger("uvicorn.access").setLevel(logging.INFO)
 
 # swagger 페이지 소개
 SWAGGER_HEADERS = {
