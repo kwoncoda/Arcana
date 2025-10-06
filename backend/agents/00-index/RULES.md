@@ -32,6 +32,12 @@
 3. 코딩하는 과정에는 in-progress로 상태를 바꾸세요.
 
 
+# backend 코딩
+1. backend의 실행 루트는 backend 폴더안에서 시작합니다.
+
+2. import할때 backend 폴더부터 시작하는것이 아닙니다.
+
+
 # 코딩 완료시
 
 1. task에 따라 하나의 task를 완료하면 그 task를 완료상태로 변경하고 어떠한 변화가 있는지 기록하세요.
