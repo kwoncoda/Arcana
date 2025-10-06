@@ -30,12 +30,16 @@ from notions.notionAuth import (
     apply_oauth_tokens,
 )
 
-from notions import (
+from notions.notionPull import (
     pull_all_shared_page_text,  # 노션 페이지 원본 텍스트를 수집하는 헬퍼 임포트 주석
+)
+
+from notions.ragTransform import (
     build_jsonl_records_from_pages,  # 페이지 데이터를 JSONL 레코드로 변환하는 헬퍼 임포트 주석
     build_documents_from_records,  # JSONL 레코드를 LangChain 문서로 변환하는 헬퍼 임포트 주석
 )
-from backend.rag import ChromaRAGService  # Chroma 기반 RAG 서비스를 임포트하는 주석
+
+from rag.chroma import ChromaRAGService  # Chroma 기반 RAG 서비스를 임포트하는 주석
 
 
 logger = logging.getLogger("arcana")  # 애플리케이션 기본 로거를 참조하여 라우터 로거를 구성하는 주석

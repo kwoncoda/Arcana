@@ -27,18 +27,18 @@ def _resolve_persist_directory(custom_dir: str | None = None) -> Path:  # 저장
 def _load_azure_openai_config() -> dict[str, str]:  # Azure OpenAI 설정을 로드하는 헬퍼 함수 정의 주석
     """Azure OpenAI 임베딩 호출에 필요한 환경 변수를 검증하고 반환합니다."""  # 함수 역할을 설명하는 주석
 
-    api_key = os.getenv("AZURE_OPENAI_API_KEY")  # Azure OpenAI API 키를 환경 변수에서 읽는 주석
-    endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")  # Azure OpenAI 엔드포인트를 환경 변수에서 읽는 주석
-    api_version = os.getenv("AZURE_OPENAI_API_VERSION")  # Azure OpenAI API 버전을 환경 변수에서 읽는 주석
-    deployment = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")  # 임베딩 배포 이름을 환경 변수에서 읽는 주석
+    api_key = os.getenv("EM_AZURE_OPENAI_API_KEY")  # Azure OpenAI API 키를 환경 변수에서 읽는 주석
+    endpoint = os.getenv("EM_AZURE_OPENAI_ENDPOINT")  # Azure OpenAI 엔드포인트를 환경 변수에서 읽는 주석
+    api_version = os.getenv("EM_AZURE_OPENAI_API_VERSION")  # Azure OpenAI API 버전을 환경 변수에서 읽는 주석
+    deployment = os.getenv("EM_AZURE_OPENAI_EMBEDDING_DEPLOYMENT")  # 임베딩 배포 이름을 환경 변수에서 읽는 주석
 
     missing = [  # 누락된 환경 변수를 추적하기 위한 리스트 생성 주석
         name
         for name, value in [  # 각 환경 변수의 존재 여부를 점검하는 리스트 컴프리헨션 주석
-            ("AZURE_OPENAI_API_KEY", api_key),
-            ("AZURE_OPENAI_ENDPOINT", endpoint),
-            ("AZURE_OPENAI_API_VERSION", api_version),
-            ("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", deployment),
+            ("EM_AZURE_OPENAI_API_KEY", api_key),
+            ("EM_AZURE_OPENAI_ENDPOINT", endpoint),
+            ("EM_AZURE_OPENAI_API_VERSION", api_version),
+            ("EM_AZURE_OPENAI_EMBEDDING_DEPLOYMENT", deployment),
         ]
         if not value  # 값이 비어있는 경우에만 리스트에 포함하는 조건 주석
     ]
