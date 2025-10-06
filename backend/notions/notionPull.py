@@ -115,7 +115,7 @@ async def _build_text_block_tree(client: AsyncClient, block: Dict[str, Any]) -> 
     texts = _extract_text_payload(block)
     children: List[TextBlock] = []
 
-    if block.get("has_children"):
+    if block.get("has_children") and block_type != "child_page":
         child_blocks = await _collect_children(client, block.get("id"))
         for child in child_blocks:
             child_text_block = await _build_text_block_tree(client, child)
