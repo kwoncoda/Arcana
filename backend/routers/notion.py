@@ -14,15 +14,14 @@ from dependencies import get_current_user
 from models import (
     DEFAULT_RAG_INDEX_NAME,
     DataSource,
-    Membership,
     NotionOauthCredentials,
     RagIndex,
     User,
     Workspace,
-    WorkspaceType,
 )
 from utils.db import get_db
 from utils.workspace_storage import ensure_workspace_storage
+from utils.workspace import resolve_user_primary_workspace, WorkspaceResolutionError
 
 from notions.notionAuth import (
     build_authorize_url,
@@ -52,43 +51,12 @@ rag_service = ChromaRAGService()  # 노션 데이터를 RAG 인덱스에 적재�
 
 def _resolve_workspace(db: Session, user: User) -> Workspace:
     try:
-        workspace_type = WorkspaceType(user.type)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="알 수 없는 워크스페이스 유형입니다.",
-        ) from exc
-
-    if workspace_type is WorkspaceType.personal:
-        workspace = db.scalar(
-            select(Workspace).where(
-                Workspace.type == WorkspaceType.personal.value,
-                Workspace.owner_user_idx == user.idx,
-            )
-        )
-    else:
-        membership = db.scalar(
-            select(Membership)
-            .where(Membership.user_idx == user.idx)
-            .order_by(Membership.idx)
-            .limit(1)
-        )
-        workspace = None
-        if membership:
-            workspace = db.scalar(
-                select(Workspace).where(
-                    Workspace.type == WorkspaceType.organization.value,
-                    Workspace.organization_idx == membership.organization_idx,
-                )
-            )
-
-    if not workspace:
+        return resolve_user_primary_workspace(db, user)
+    except WorkspaceResolutionError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="사용자 워크스페이스를 찾을 수 없습니다.",
-        )
-
-    return workspace
+            detail=str(exc),
+        ) from exc
 
 
 def _ensure_notion_resources(
