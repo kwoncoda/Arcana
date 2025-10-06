@@ -6,7 +6,7 @@ import os  # 환경 변수 접근을 위한 os 모듈 임포트 주석
 from pathlib import Path  # 경로 조작을 위해 pathlib.Path 사용 주석
 from typing import Iterable, List  # 타입 힌트를 위해 typing 모듈에서 Iterable, List 사용 주석
 
-from langchain_community.vectorstores import Chroma  # Chroma 벡터 스토어 클래스를 임포트 주석
+from langchain_chroma import Chroma  # Chroma 벡터 스토어 클래스를 임포트 주석
 from langchain_core.documents import Document  # LangChain Document 타입을 임포트 주석
 from langchain_openai import AzureOpenAIEmbeddings  # Azure OpenAI 임베딩 클래스를 임포트 주석
 
