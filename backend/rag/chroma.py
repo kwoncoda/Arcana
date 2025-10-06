@@ -73,7 +73,6 @@ class ChromaRAGService:  # Chroma 기반 RAG 서비스를 위한 클래스 정�
             api_version=config["api_version"],  # API 버전을 매개변수로 전달하는 주석
             azure_deployment=config["deployment"],  # 임베딩 배포 이름을 매개변수로 전달하는 주석
             model=config["model"],  # 임베딩 모델명을 명시적으로 전달하는 주석
-            encoding_format="float",  # 임베딩 포맷을 Azure 설정에 맞춰 float로 지정하는 주석
         )
 
     def _get_vectorstore(self, workspace_idx: int, workspace_name: str) -> Chroma:  # 워크스페이스별 Chroma 인스턴스를 반환하는 내부 메서드 주석
