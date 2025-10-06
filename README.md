@@ -61,7 +61,15 @@ Arcana는 사내 문서와 외부 지식원을 연결해 검색과 생성형 답
      ```env
      NOTION_CLIENT_ID=<Notion Integration ID>
      NOTION_CLIENT_SECRET=<Notion Secret>
-     NOTION_REDIRECT_URI=http://localhost:8000/oauth/callback
+     NOTION_REDIRECT_URI=http://localhost:8000/api/notion/oauth/callback
+     ```
+      Azure OpenAI 임베딩 (사용 시)
+     ```env
+     EM_AZURE_OPENAI_API_KEY=<Azure OpenAI API Key>
+     EM_AZURE_OPENAI_ENDPOINT=https://<리소스-이름>.openai.azure.com
+     EM_AZURE_OPENAI_API_VERSION=<버젼 날짜>
+     EM_AZURE_OPENAI_EMBEDDING_DEPLOYMENT=<임베딩 배포 이름>
+     EM_AZURE_OPENAI_EMBEDDING_MODEL=<임베딩 모델명, 선택, 기본값은 배포 이름>
      ```
    - `.env`는 `docker-compose.yml`의 `env_file`로 두 컨테이너에 주입됩니다.
 

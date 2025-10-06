@@ -18,13 +18,14 @@ from utils.workspace_storage import (  # 워크스페이스별 스토리지 경�
 _DEFAULT_STORAGE_ROOT = workspace_storage_path("_").parent  # 기본 RAG 스토리지 루트를 정의하는 주석
 
 
-def _load_azure_openai_config() -> dict[str, str]:  # Azure OpenAI 설정을 로드하는 헬퍼 함수 정의 주석
+def _load_azure_openai_config() -> dict[str, str]:  # Azure OpenAI 설정을 로드하는 헬퍼 함수 정의
     """Azure OpenAI 임베딩 호출에 필요한 환경 변수를 검증하고 반환합니다."""  # 함수 역할을 설명하는 주석
 
-    api_key = os.getenv("EM_AZURE_OPENAI_API_KEY")  # Azure OpenAI API 키를 환경 변수에서 읽는 주석
-    endpoint = os.getenv("EM_AZURE_OPENAI_ENDPOINT")  # Azure OpenAI 엔드포인트를 환경 변수에서 읽는 주석
-    api_version = os.getenv("EM_AZURE_OPENAI_API_VERSION")  # Azure OpenAI API 버전을 환경 변수에서 읽는 주석
-    deployment = os.getenv("EM_AZURE_OPENAI_EMBEDDING_DEPLOYMENT")  # 임베딩 배포 이름을 환경 변수에서 읽는 주석
+    api_key = os.getenv("EM_AZURE_OPENAI_API_KEY")  
+    endpoint = os.getenv("EM_AZURE_OPENAI_ENDPOINT")  
+    api_version = os.getenv("EM_AZURE_OPENAI_API_VERSION")  
+    deployment = os.getenv("EM_AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
+    model = os.getenv("EM_AZURE_OPENAI_EMBEDDING_MODEL")
 
     missing = [  # 누락된 환경 변수를 추적하기 위한 리스트 생성 주석
         name
@@ -46,6 +47,7 @@ def _load_azure_openai_config() -> dict[str, str]:  # Azure OpenAI 설정을 로
         "endpoint": endpoint,
         "api_version": api_version,
         "deployment": deployment,
+        "model": model or deployment,
     }
 
 
@@ -70,6 +72,8 @@ class ChromaRAGService:  # Chroma 기반 RAG 서비스를 위한 클래스 정�
             api_key=config["api_key"],  # API 키를 매개변수로 전달하는 주석
             api_version=config["api_version"],  # API 버전을 매개변수로 전달하는 주석
             azure_deployment=config["deployment"],  # 임베딩 배포 이름을 매개변수로 전달하는 주석
+            model=config["model"],  # 임베딩 모델명을 명시적으로 전달하는 주석
+            encoding_format="float",  # 임베딩 포맷을 Azure 설정에 맞춰 float로 지정하는 주석
         )
 
     def _get_vectorstore(self, workspace_idx: int, workspace_name: str) -> Chroma:  # 워크스페이스별 Chroma 인스턴스를 반환하는 내부 메서드 주석
@@ -100,5 +104,4 @@ class ChromaRAGService:  # Chroma 기반 RAG 서비스를 위한 클래스 정�
 
         ids = [doc.metadata.get("chunk_id") for doc in docs]  # 각 문서의 chunk_id를 추출하는 주석
         store.add_documents(documents=docs, ids=ids)  # Chroma에 문서를 추가하는 주석
-        store.persist()  # 변경 사항을 디스크에 저장하는 주석
         return len(docs)  # 추가된 문서 수를 반환하는 주석
