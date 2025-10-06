@@ -12,14 +12,17 @@ from sqlalchemy.orm import Session
 
 from dependencies import get_current_user
 from models import (
+    DEFAULT_RAG_INDEX_NAME,
     DataSource,
     Membership,
     NotionOauthCredentials,
+    RagIndex,
     User,
     Workspace,
     WorkspaceType,
 )
 from utils.db import get_db
+from utils.workspace_storage import ensure_workspace_storage
 
 from notions.notionAuth import (
     build_authorize_url,
@@ -260,34 +263,47 @@ async def pull_all_pages(
         logger.debug("Processed Notion JSONL payload: %s", jsonl_text)  # 최종 JSONL 텍스트를 디버그 로그로 출력하는 주석
 
     try:
-        ingested_count = rag_service.upsert_documents(workspace.idx, documents)  # 변환된 문서를 Chroma에 적재하고 개수 반환 주석
+        ingested_count = rag_service.upsert_documents(workspace.idx, workspace.name, documents)  # 변환된 문서를 Chroma에 적재하고 개수 반환 주석
     except RuntimeError as exc:  # Azure OpenAI 구성 누락 등 구성 오류 처리 주석
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,  # 내부 서버 오류 응답 코드 지정 주석
             detail=f"RAG 적재 실패: {exc}",  # 실패 사유를 상세 메시지로 전달 주석
         ) from exc
 
+    storage_path = ensure_workspace_storage(workspace.name)
+    rag_index = db.scalar(
+        select(RagIndex).where(
+            RagIndex.workspace_idx == workspace.idx,
+            RagIndex.name == DEFAULT_RAG_INDEX_NAME,
+        )
+    )
 
-    workspace_metadata = {  # 워크스페이스 정보를 문서 메타데이터로 포함하기 위한 딕셔너리 생성 주석
-        "workspace_idx": workspace.idx,  # 워크스페이스 고유 식별자 저장 주석
-        "workspace_type": workspace.type,  # 워크스페이스 유형 저장 주석
-        "workspace_name": workspace.name,  # 워크스페이스 이름 저장 주석
-    }
-    jsonl_records = build_jsonl_records_from_pages(payload.get("pages", []))  # 수집된 페이지를 JSONL 레코드로 전처리하는 주석
-    documents = build_documents_from_records(jsonl_records, workspace_metadata)  # 전처리된 레코드를 LangChain 문서로 변환하는 주석
-    jsonl_lines = [json.dumps(record, ensure_ascii=False) for record in jsonl_records]  # 레코드를 JSON 문자열로 직렬화하는 주석
-    jsonl_text = "\n".join(jsonl_lines)  # JSONL 텍스트를 생성하기 위해 줄바꿈으로 결합하는 주석
+    if not rag_index:
+        rag_index = RagIndex(
+            workspace_idx=workspace.idx,
+            name=DEFAULT_RAG_INDEX_NAME,
+            index_type="chroma",
+            storage_uri=str(storage_path),
+            status="ready",
+        )
+        db.add(rag_index)
+    else:
+        rag_index.storage_uri = str(storage_path)
+        rag_index.index_type = "chroma"
 
-    if logger.isEnabledFor(logging.DEBUG):  # 디버그 레벨에서만 전처리 결과를 기록하도록 조건을 설정하는 주석
-        logger.debug("Processed Notion JSONL payload: %s", jsonl_text)  # 최종 JSONL 텍스트를 디버그 로그로 출력하는 주석
+    rag_index.object_count = int(payload.get("count") or 0)
+    rag_index.vector_count = int(ingested_count)
+    rag_index.status = "ready"
 
     try:
-        ingested_count = rag_service.upsert_documents(workspace.idx, documents)  # 변환된 문서를 Chroma에 적재하고 개수 반환 주석
-    except RuntimeError as exc:  # Azure OpenAI 구성 누락 등 구성 오류 처리 주석
+        db.commit()
+    except Exception as exc:  # pragma: no cover - defensive clause
+        db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,  # 내부 서버 오류 응답 코드 지정 주석
-            detail=f"RAG 적재 실패: {exc}",  # 실패 사유를 상세 메시지로 전달 주석
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="RAG 인덱스 메타데이터를 갱신하는 중 오류가 발생했습니다.",
         ) from exc
+
     return {  # API 응답 페이로드를 구성하는 주석
         **payload,  # 원본 Notion 수집 결과를 포함하는 주석
         "jsonl_records": jsonl_records,  # 전처리된 JSONL 레코드 리스트를 포함하는 주석
