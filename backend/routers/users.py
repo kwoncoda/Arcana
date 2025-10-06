@@ -19,8 +19,10 @@ from schema.users import (
     TokenRefreshResponse,
 )
 from models import (
+    DEFAULT_RAG_INDEX_NAME,
     Membership,
     Organization,
+    RagIndex,
     Workspace,
     WorkspaceType,
     User,
@@ -32,6 +34,7 @@ from utils.auth import (
     decode_refresh_token,
 )
 from utils.db import Base, get_db
+from utils.workspace_storage import ensure_workspace_storage
 
 
 PBKDF2_ITERATIONS = 390_000
@@ -81,6 +84,33 @@ def verify_password(password: str, hashed: str) -> bool:
     test_hash = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations_int)
     return hmac.compare_digest(expected_hash, test_hash)
 
+
+def _ensure_workspace_rag_index(db: Session, workspace: Workspace) -> RagIndex:
+    """Ensure a default rag index metadata row exists for the workspace."""
+
+    storage_path = ensure_workspace_storage(workspace.name)
+
+    rag_index = db.scalar(
+        select(RagIndex).where(
+            RagIndex.workspace_idx == workspace.idx,
+            RagIndex.name == DEFAULT_RAG_INDEX_NAME,
+        )
+    )
+
+    if rag_index:
+        rag_index.storage_uri = str(storage_path)
+        rag_index.index_type = "chroma"
+        return rag_index
+
+    rag_index = RagIndex(
+        workspace_idx=workspace.idx,
+        name=DEFAULT_RAG_INDEX_NAME,
+        index_type="chroma",
+        storage_uri=str(storage_path),
+        status="ready",
+    )
+    db.add(rag_index)
+    return rag_index
 
 
 @router.post(
@@ -198,6 +228,12 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
             owner_user_idx=user.idx,
         )
         db.add(workspace)
+
+    if workspace and workspace.idx is None:
+        db.flush()
+
+    if workspace:
+        _ensure_workspace_rag_index(db, workspace)
 
     try:
         db.commit()

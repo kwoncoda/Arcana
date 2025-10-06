@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import BigInteger, Column, DateTime, String, Boolean, Text, JSON
+from sqlalchemy import BigInteger, Column, DateTime, String, Boolean, Text, JSON, Integer
 
 from utils.db import Base
 
@@ -65,6 +65,23 @@ class Membership(Base):
     user_idx = Column(BigInteger, nullable=False)
     role = Column(String(50), nullable=False, default="member")
     created = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class RagIndex(Base):
+    """워크스페이스별 RAG 인덱스 메타데이터."""
+
+    __tablename__ = "rag_indexes"
+
+    idx = Column(BigInteger, primary_key=True, autoincrement=True)
+    workspace_idx = Column(BigInteger, nullable=False)
+    name = Column(String(200), nullable=False, default="default")
+    index_type = Column(String(20), nullable=False)
+    storage_uri = Column(String(1000), nullable=False)
+    dim = Column(Integer, nullable=True)
+    status = Column(String(20), nullable=False, default="ready")
+    object_count = Column(Integer, nullable=False, default=0)
+    vector_count = Column(Integer, nullable=False, default=0)
+    updated = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class NotionOauthCredentials(Base):
     __tablename__ = "notion_oauth_credentials"
