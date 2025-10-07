@@ -6,12 +6,11 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from uuid import uuid4
 
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
-from langchain_core.vectorstores import VectorStoreRetriever
 from langchain_openai import AzureOpenAIEmbeddings
 from rank_bm25 import BM25Okapi
 
@@ -219,76 +218,6 @@ class ChromaRAGService:
         self._invalidate_keyword_index(key)
         return len(docs)
 
-    def get_retriever(
-        self,
-        workspace_idx: int,
-        workspace_name: str,
-        *,
-        storage_uri: Optional[str] = None,
-        search_type: str = "similarity",
-        search_kwargs: Optional[dict[str, Any]] = None,
-    ) -> VectorStoreRetriever:
-        store = self._get_vectorstore(
-            workspace_idx, workspace_name, storage_uri=storage_uri
-        )
-        effective_kwargs: dict[str, Any] = dict(search_kwargs or {})
-        effective_kwargs.setdefault("k", 4)
-        return store.as_retriever(
-            search_type=search_type, search_kwargs=effective_kwargs
-        )
-
-    def similarity_search_with_score(
-        self,
-        workspace_idx: int,
-        workspace_name: str,
-        query: str,
-        *,
-        k: int = 4,
-        storage_uri: Optional[str] = None,
-        retriever: Optional[VectorStoreRetriever] = None,
-    ) -> Sequence[Tuple[Document, float]]:
-        if retriever is not None:
-            store = retriever.vectorstore
-            effective_k = getattr(retriever, "search_kwargs", {}).get("k", k)
-        else:
-            store = self._get_vectorstore(
-                workspace_idx, workspace_name, storage_uri=storage_uri
-            )
-            effective_k = k
-        return store.similarity_search_with_score(query, k=effective_k)
-
-    def keyword_search_with_score(
-        self,
-        workspace_idx: int,
-        workspace_name: str,
-        query: str,
-        *,
-        k: int = 4,
-        storage_uri: Optional[str] = None,
-    ) -> Sequence[Tuple[Document, float]]:
-        keyword_index = self._ensure_keyword_index(
-            workspace_idx, workspace_name, storage_uri=storage_uri
-        )
-        if keyword_index is None:
-            return []
-
-        tokens = _tokenize(query)
-        if not tokens:
-            return []
-
-        scores = keyword_index.retriever.get_scores(tokens)
-        ranked = sorted(
-            enumerate(scores), key=lambda item: item[1], reverse=True
-        )
-        results: List[Tuple[Document, float]] = []
-        for idx, score in ranked:
-            if score <= 0:
-                continue
-            results.append((keyword_index.documents[idx], float(score)))
-            if len(results) >= k:
-                break
-        return results
-
     def _document_key(self, doc: Document, fallback: int) -> str:
         metadata = doc.metadata or {}
         for key in ("rag_document_id", "chunk_id", "page_id", "source"):
@@ -335,28 +264,38 @@ class ChromaRAGService:
         candidate_pool: Optional[int] = None,
         rrf_k: int = 60,
     ) -> Sequence[Tuple[Document, float]]:
-        final_top_n = max(1, int(k))
-        candidate_pool = candidate_pool or max(final_top_n * 3, 30)
-        candidate_pool = max(candidate_pool, final_top_n)
+        final_top_n = max(1, int(k))  # 최종으로 반환할 문서 개수를 최소 1개로 보정
+        candidate_pool = candidate_pool or max(final_top_n * 3, 30)  # 초기 후보 풀을 요청 개수 대비 넉넉하게 확보
+        candidate_pool = max(candidate_pool, final_top_n)  # 후보 수가 최종 반환 개수보다 작지 않도록 보정
 
-        alpha = max(0.1, min(float(alpha), 0.9))
-        vector_k = max(1, int(round(candidate_pool * alpha)))
-        keyword_k = max(1, candidate_pool - vector_k)
+        alpha = max(0.1, min(float(alpha), 0.9))  # 하이브리드 가중치가 극단값을 벗어나지 않도록 제한
+        vector_k = max(1, int(round(candidate_pool * alpha)))  # 벡터 검색으로 가져올 문서 수를 가중치 비율로 계산
+        keyword_k = max(1, candidate_pool - vector_k)  # 키워드 검색으로 채울 문서 수도 최소 1개로 확보
 
-        vector_results = self.similarity_search_with_score(
-            workspace_idx,
-            workspace_name,
-            query,
-            k=vector_k,
-            storage_uri=storage_uri,
+        store = self._get_vectorstore(
+            workspace_idx, workspace_name, storage_uri=storage_uri
         )
-        keyword_results = self.keyword_search_with_score(
-            workspace_idx,
-            workspace_name,
-            query,
-            k=keyword_k,
-            storage_uri=storage_uri,
+        vector_results = store.similarity_search_with_score(query, k=vector_k)
+
+        keyword_results: List[Tuple[Document, float]] = []
+        keyword_index = self._ensure_keyword_index(
+            workspace_idx, workspace_name, storage_uri=storage_uri
         )
+        if keyword_index is not None:
+            tokens = _tokenize(query)
+            if tokens:
+                scores = keyword_index.retriever.get_scores(tokens)
+                ranked = sorted(
+                    enumerate(scores), key=lambda item: item[1], reverse=True
+                )
+                for idx, score in ranked:
+                    if score <= 0:
+                        continue
+                    keyword_results.append(
+                        (keyword_index.documents[idx], float(score))
+                    )
+                    if len(keyword_results) >= keyword_k:
+                        break
 
         if not keyword_results:
             return vector_results[:final_top_n]
