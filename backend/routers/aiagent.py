@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -69,4 +71,17 @@ async def search_workspace_documents(
             detail="RAG 검색 중 오류가 발생했습니다.",
         ) from exc
 
-    return SearchResponse.from_result(result)
+    response = SearchResponse.from_result(result)
+
+    if logger.isEnabledFor(logging.DEBUG):
+        log_payload = {
+            "question": result.question,
+            "answer": response.answer,
+            "citations": [asdict(citation) for citation in result.citations],
+        }
+        logger.debug(
+            "RAG search response: %s",
+            json.dumps(log_payload, ensure_ascii=False),
+        )
+
+    return response
