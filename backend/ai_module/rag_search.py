@@ -13,13 +13,15 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import AzureChatOpenAI
 
+import cohere
+
 from rag.chroma import ChromaRAGService
 
 logger = logging.getLogger("arcana")
 
 
 class SearchStrategy(str, Enum):
-    """Supported retrieval strategies."""
+    """검색 소스"""
 
     VECTOR = "vector"
     KEYWORD = "keyword"
@@ -85,8 +87,8 @@ def _load_chat_config() -> Dict[str, str]:
 class WorkspaceRAGSearchAgent:
     """Workspace-aware retrieval augmented generation search agent."""
 
-    _COHERE_MODEL_ENV = "COHERE_RERANK_MODEL"
-    _DEFAULT_COHERE_MODEL = "rerank-english-v3.0"
+    _COHERE_MODEL_ENV = os.getenv("COHERE_MODEL_ENV")
+    _DEFAULT_COHERE_MODEL = os.getenv("DEFAULT_COHERE_MODEL")
     _COHERE_PROVIDER = "cohere"
 
     def __init__(self, rag_service: Optional[ChromaRAGService] = None) -> None:
@@ -130,8 +132,7 @@ class WorkspaceRAGSearchAgent:
                 api_key=config["api_key"],
                 api_version=config["api_version"],
                 azure_deployment=config["deployment"],
-                # 일부 버전에서 model과 deployment 동시 지정 시 충돌할 수 있어 필요 시 주석 해제
-                # model=config["model"],
+                model=config["model"],
                 temperature=0.2,
                 max_tokens=800,
                 max_retries=3,
@@ -145,11 +146,7 @@ class WorkspaceRAGSearchAgent:
         api_key = os.getenv("COHERE_API_KEY")
         if not api_key:
             raise RuntimeError("COHERE_API_KEY 환경 변수를 설정해야 Cohere rerank를 사용할 수 있습니다.")
-
-        try:
-            import cohere
-        except ImportError as exc:  # pragma: no cover - 설치 누락 방어
-            raise RuntimeError("cohere 패키지가 설치되어 있지 않습니다.") from exc
+    
 
         model = os.getenv(self._COHERE_MODEL_ENV, self._DEFAULT_COHERE_MODEL)
         self._cohere_client = cohere.Client(api_key)
@@ -203,7 +200,7 @@ class WorkspaceRAGSearchAgent:
                     if metadata.get("chunk_index") is not None
                     else None
                 )
-            except (TypeError, ValueError):  # pragma: no cover - 방어 코드
+            except (TypeError, ValueError): 
                 chunk_index = None
             key = str(chunk_id) if chunk_id else f"fallback-{len(citations)}"
             citations[key] = Citation(

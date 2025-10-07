@@ -23,7 +23,7 @@ _TOKEN_PATTERN = re.compile(r"[\w가-힣]+", re.UNICODE)
 
 @dataclass(slots=True)
 class _KeywordIndex:
-    """In-memory BM25 index for keyword retrieval."""
+    """키워드 검색을 위한 메모리 내 BM25 인덱스."""
 
     retriever: BM25Okapi
     documents: List[Document]
@@ -31,7 +31,7 @@ class _KeywordIndex:
 
 
 def _load_azure_openai_config() -> dict[str, str]:
-    """Load and validate Azure OpenAI embedding configuration."""
+    """Azure OpenAI 임베딩 구성을 로드하고 검증"""
 
     api_key = os.getenv("EM_AZURE_OPENAI_API_KEY")
     endpoint = os.getenv("EM_AZURE_OPENAI_ENDPOINT")
