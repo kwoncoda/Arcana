@@ -1,104 +1,313 @@
-"""Chroma 기반 RAG 적재를 담당하는 서비스 모듈입니다."""  # 모듈 기능을 설명하는 주석
+"""Chroma 기반 RAG 적재 및 검색 서비스."""
+from __future__ import annotations
 
-from __future__ import annotations  # 미래 호환성을 위한 __future__ 임포트 주석
+import os
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from threading import RLock
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from uuid import uuid4
 
-import os  # 환경 변수 접근을 위한 os 모듈 임포트 주석
-from pathlib import Path  # 경로 조작을 위해 pathlib.Path 사용 주석
-from typing import Iterable, List  # 타입 힌트를 위해 typing 모듈에서 Iterable, List 사용 주석
+from langchain_chroma import Chroma
+from langchain_core.documents import Document
+from langchain_openai import AzureOpenAIEmbeddings
+from rank_bm25 import BM25Okapi
 
-from langchain_community.vectorstores import Chroma  # Chroma 벡터 스토어 클래스를 임포트 주석
-from langchain_core.documents import Document  # LangChain Document 타입을 임포트 주석
-from langchain_openai import AzureOpenAIEmbeddings  # Azure OpenAI 임베딩 클래스를 임포트 주석
+from utils.workspace_storage import ensure_workspace_storage, workspace_storage_path
 
-from utils.workspace_storage import (  # 워크스페이스별 스토리지 경로 유틸리티 임포트 주석
-    ensure_workspace_storage,
-    workspace_storage_path,
-)
-
-_DEFAULT_STORAGE_ROOT = workspace_storage_path("_").parent  # 기본 RAG 스토리지 루트를 정의하는 주석
+_DEFAULT_STORAGE_ROOT = workspace_storage_path("_").parent
+_TOKEN_PATTERN = re.compile(r"[\w가-힣]+", re.UNICODE)
 
 
-def _load_azure_openai_config() -> dict[str, str]:  # Azure OpenAI 설정을 로드하는 헬퍼 함수 정의 주석
-    """Azure OpenAI 임베딩 호출에 필요한 환경 변수를 검증하고 반환합니다."""  # 함수 역할을 설명하는 주석
+@dataclass(slots=True)
+class _KeywordIndex:
+    """키워드 검색을 위한 메모리 내 BM25 인덱스."""
 
-    api_key = os.getenv("EM_AZURE_OPENAI_API_KEY")  # Azure OpenAI API 키를 환경 변수에서 읽는 주석
-    endpoint = os.getenv("EM_AZURE_OPENAI_ENDPOINT")  # Azure OpenAI 엔드포인트를 환경 변수에서 읽는 주석
-    api_version = os.getenv("EM_AZURE_OPENAI_API_VERSION")  # Azure OpenAI API 버전을 환경 변수에서 읽는 주석
-    deployment = os.getenv("EM_AZURE_OPENAI_EMBEDDING_DEPLOYMENT")  # 임베딩 배포 이름을 환경 변수에서 읽는 주석
+    retriever: BM25Okapi
+    documents: List[Document]
+    ids: List[str]
 
-    missing = [  # 누락된 환경 변수를 추적하기 위한 리스트 생성 주석
+
+def _load_azure_openai_config() -> dict[str, str]:
+    """Azure OpenAI 임베딩 구성을 로드하고 검증"""
+
+    api_key = os.getenv("EM_AZURE_OPENAI_API_KEY")
+    endpoint = os.getenv("EM_AZURE_OPENAI_ENDPOINT")
+    api_version = os.getenv("EM_AZURE_OPENAI_API_VERSION")
+    deployment = os.getenv("EM_AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
+    model = os.getenv("EM_AZURE_OPENAI_EMBEDDING_MODEL")
+
+    missing = [
         name
-        for name, value in [  # 각 환경 변수의 존재 여부를 점검하는 리스트 컴프리헨션 주석
+        for name, value in [
             ("EM_AZURE_OPENAI_API_KEY", api_key),
             ("EM_AZURE_OPENAI_ENDPOINT", endpoint),
             ("EM_AZURE_OPENAI_API_VERSION", api_version),
             ("EM_AZURE_OPENAI_EMBEDDING_DEPLOYMENT", deployment),
         ]
-        if not value  # 값이 비어있는 경우에만 리스트에 포함하는 조건 주석
+        if not value
     ]
+    if missing:
+        raise RuntimeError(
+            "다음 Azure OpenAI 환경 변수가 필요합니다: " + ", ".join(missing)
+        )
 
-    if missing:  # 필수 환경 변수가 하나라도 누락된 경우 확인 주석
-        joined = ", ".join(missing)  # 누락된 환경 변수 이름을 문자열로 결합 주석
-        raise RuntimeError(f"다음 Azure OpenAI 환경 변수가 필요합니다: {joined}")  # 예외를 발생시켜 누락을 알리는 주석
-
-    return {  # 유효한 설정 값을 딕셔너리로 반환하는 주석
+    return {
         "api_key": api_key,
         "endpoint": endpoint,
         "api_version": api_version,
         "deployment": deployment,
+        "model": model or deployment,
     }
 
 
-class ChromaRAGService:  # Chroma 기반 RAG 서비스를 위한 클래스 정의 주석
-    """Chroma 벡터 스토어에 문서를 적재하는 헬퍼입니다."""  # 클래스 역할 설명 주석
+def _tokenize(text: str) -> List[str]:
+    """Tokenize text for BM25 retrieval."""
 
-    def __init__(self) -> None:  # 초기화 메서드 정의 주석
-        self._storage_root = _DEFAULT_STORAGE_ROOT  # 기본 스토리지 디렉터리를 Path로 저장하는 주석
-        self._storage_root.mkdir(parents=True, exist_ok=True)  # 스토리지 루트 디렉터리를 미리 생성하는 주석
-        self._vectorstores: dict[int, Chroma] = {}  # 워크스페이스별 Chroma 인스턴스 캐시 딕셔너리 초기화 주석
+    return [token.lower() for token in _TOKEN_PATTERN.findall(text or "")]
 
-    def _collection_name(self, workspace_idx: int) -> str:  # 컬렉션 이름을 생성하는 내부 메서드 정의 주석
-        return f"workspace-{workspace_idx}"  # 워크스페이스 식별자를 포함한 컬렉션 이름 반환 주석
 
-    def _workspace_directory(self, workspace_name: str) -> Path:  # 워크스페이스 전용 디렉터리를 반환하는 내부 메서드 주석
-        return ensure_workspace_storage(workspace_name)  # 유틸을 통해 워크스페이스 디렉터리를 생성/반환하는 주석
+class ChromaRAGService:
+    """Helper responsible for loading, caching and querying Chroma vector stores."""
 
-    def _create_embeddings(self) -> AzureOpenAIEmbeddings:  # Azure OpenAI 임베딩 인스턴스를 생성하는 내부 메서드 정의 주석
-        config = _load_azure_openai_config()  # Azure OpenAI 설정을 로드하는 주석
-        return AzureOpenAIEmbeddings(  # 설정 값을 사용해 임베딩 객체를 생성하고 반환하는 주석
-            azure_endpoint=config["endpoint"],  # Azure 엔드포인트를 매개변수로 전달하는 주석
-            api_key=config["api_key"],  # API 키를 매개변수로 전달하는 주석
-            api_version=config["api_version"],  # API 버전을 매개변수로 전달하는 주석
-            azure_deployment=config["deployment"],  # 임베딩 배포 이름을 매개변수로 전달하는 주석
+    def __init__(self) -> None:
+        self._storage_root = _DEFAULT_STORAGE_ROOT
+        self._storage_root.mkdir(parents=True, exist_ok=True)
+        self._lock = RLock()
+        self._vectorstores: dict[Tuple[int, str], Chroma] = {}
+        self._keyword_indexes: dict[Tuple[int, str], _KeywordIndex] = {}
+
+    def _collection_name(self, workspace_idx: int) -> str:
+        return f"workspace-{workspace_idx}"
+
+    def _workspace_directory(self, workspace_name: str) -> Path:
+        return ensure_workspace_storage(workspace_name)
+
+    def _resolve_persist_directory(
+        self,
+        workspace_name: str,
+        *,
+        storage_uri: Optional[str] = None,
+    ) -> Path:
+        if storage_uri:
+            path = Path(storage_uri)
+            path.mkdir(parents=True, exist_ok=True)
+            return path
+        return self._workspace_directory(workspace_name)
+
+    def _cache_key(
+        self,
+        workspace_idx: int,
+        workspace_name: str,
+        *,
+        storage_uri: Optional[str] = None,
+    ) -> Tuple[int, str]:
+        persist_directory = self._resolve_persist_directory(
+            workspace_name, storage_uri=storage_uri
+        )
+        return (workspace_idx, str(persist_directory.resolve()))
+
+    def _create_embeddings(self) -> AzureOpenAIEmbeddings:
+        config = _load_azure_openai_config()
+        return AzureOpenAIEmbeddings(
+            azure_endpoint=config["endpoint"],
+            api_key=config["api_key"],
+            api_version=config["api_version"],
+            azure_deployment=config["deployment"],
+            model=config["model"],
         )
 
-    def _get_vectorstore(self, workspace_idx: int, workspace_name: str) -> Chroma:  # 워크스페이스별 Chroma 인스턴스를 반환하는 내부 메서드 주석
-        store = self._vectorstores.get(workspace_idx)  # 캐시에서 기존 인스턴스를 조회하는 주석
-        if store:  # 캐시에 인스턴스가 존재하면 반환하는 조건 주석
-            return store  # 기존 스토어를 반환하는 주석
-
-        persist_directory = self._workspace_directory(workspace_name)  # 워크스페이스 전용 디렉터리를 가져오는 주석
-        embeddings = self._create_embeddings()  # 임베딩 인스턴스를 생성하는 주석
-        store = Chroma(  # 새로운 Chroma 인스턴스를 생성하는 주석
-            collection_name=self._collection_name(workspace_idx),  # 컬렉션 이름 지정 주석
-            embedding_function=embeddings,  # 임베딩 함수를 설정하는 주석
-            persist_directory=str(persist_directory),  # 지속 디렉터리를 문자열로 전달하는 주석
+    def _get_vectorstore(
+        self,
+        workspace_idx: int,
+        workspace_name: str,
+        *,
+        storage_uri: Optional[str] = None,
+    ) -> Chroma:
+        key = self._cache_key(
+            workspace_idx, workspace_name, storage_uri=storage_uri
         )
-        self._vectorstores[workspace_idx] = store  # 생성한 스토어를 캐시에 저장하는 주석
-        return store  # 새로 생성한 스토어를 반환하는 주석
+        with self._lock:
+            store = self._vectorstores.get(key)
+            if store is not None:
+                return store
+            embeddings = self._create_embeddings()
+            persist_directory = key[1]
+            store = Chroma(
+                collection_name=self._collection_name(workspace_idx),
+                embedding_function=embeddings,
+                persist_directory=persist_directory,
+            )
+            self._vectorstores[key] = store
+            return store
+
+    def _invalidate_keyword_index(self, key: Tuple[int, str]) -> None:
+        with self._lock:
+            self._keyword_indexes.pop(key, None)
+
+    def _ensure_keyword_index(
+        self,
+        workspace_idx: int,
+        workspace_name: str,
+        *,
+        storage_uri: Optional[str] = None,
+    ) -> Optional[_KeywordIndex]:
+        key = self._cache_key(
+            workspace_idx, workspace_name, storage_uri=storage_uri
+        )
+        with self._lock:
+            cached = self._keyword_indexes.get(key)
+            if cached is not None:
+                return cached
+
+        store = self._get_vectorstore(
+            workspace_idx, workspace_name, storage_uri=storage_uri
+        )
+        raw = store.get(include=["documents", "metadatas"])
+        ids = raw.get("ids") or []
+        documents = raw.get("documents") or []
+        metadatas = raw.get("metadatas") or []
+        if not documents:
+            return None
+
+        langchain_docs: List[Document] = []
+        tokenized_corpus: List[List[str]] = []
+        for idx, content in enumerate(documents):
+            metadata = dict(metadatas[idx] or {})
+            metadata.setdefault("rag_document_id", ids[idx])
+            langchain_docs.append(Document(page_content=content, metadata=metadata))
+            tokenized_corpus.append(_tokenize(content))
+
+        retriever = BM25Okapi(tokenized_corpus)
+        keyword_index = _KeywordIndex(
+            retriever=retriever, documents=langchain_docs, ids=list(ids)
+        )
+        with self._lock:
+            self._keyword_indexes[key] = keyword_index
+        return keyword_index
 
     def upsert_documents(
         self,
         workspace_idx: int,
         workspace_name: str,
         documents: Iterable[Document],
-    ) -> int:  # 문서를 추가하는 공개 메서드 정의 주석
-        store = self._get_vectorstore(workspace_idx, workspace_name)  # 대상 워크스페이스의 스토어를 가져오는 주석
-        docs: List[Document] = list(documents)  # 입력 이터러블을 리스트로 변환해 보관하는 주석
-        if not docs:  # 문서가 비어있는 경우 조기 종료 조건 주석
-            return 0  # 추가된 문서 수 0을 반환하는 주석
+        *,
+        storage_uri: Optional[str] = None,
+    ) -> int:
+        store = self._get_vectorstore(
+            workspace_idx, workspace_name, storage_uri=storage_uri
+        )
+        docs: List[Document] = list(documents)
+        if not docs:
+            return 0
 
-        ids = [doc.metadata.get("chunk_id") for doc in docs]  # 각 문서의 chunk_id를 추출하는 주석
-        store.add_documents(documents=docs, ids=ids)  # Chroma에 문서를 추가하는 주석
-        store.persist()  # 변경 사항을 디스크에 저장하는 주석
-        return len(docs)  # 추가된 문서 수를 반환하는 주석
+        ids: List[str] = []
+        for index, doc in enumerate(docs):
+            metadata = dict(doc.metadata or {})
+            chunk_id = metadata.get("chunk_id")
+            rag_id = chunk_id or metadata.get("page_id") or f"{index}-{uuid4()}"
+            metadata.setdefault("rag_document_id", rag_id)
+            doc.metadata = metadata
+            ids.append(chunk_id or rag_id)
+
+        store.add_documents(documents=docs, ids=ids)
+        key = self._cache_key(
+            workspace_idx, workspace_name, storage_uri=storage_uri
+        )
+        self._invalidate_keyword_index(key)
+        return len(docs)
+
+    def _document_key(self, doc: Document, fallback: int) -> str:
+        metadata = doc.metadata or {}
+        for key in ("rag_document_id", "chunk_id", "page_id", "source"):
+            value = metadata.get(key)
+            if value:
+                return str(value)
+        return f"doc-{fallback}"
+
+    def _rrf_merge(
+        self,
+        primary: Sequence[Document],
+        secondary: Sequence[Document],
+        *,
+        top_n: int,
+        k_rrf: int,
+    ) -> List[Tuple[Document, float]]:
+        scores: Dict[str, float] = {}
+        seen: Dict[str, Document] = {}
+
+        def add_candidates(docs: Sequence[Document]) -> None:
+            for rank, doc in enumerate(docs, start=1):
+                key = self._document_key(doc, rank)
+                seen.setdefault(key, doc)
+                scores[key] = scores.get(key, 0.0) + 1.0 / (k_rrf + rank)
+
+        add_candidates(primary)
+        add_candidates(secondary)
+
+        ordered_keys = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+        merged: List[Tuple[Document, float]] = []
+        for key, score in ordered_keys[:top_n]:
+            merged.append((seen[key], float(score)))
+        return merged
+
+    def hybrid_search_with_score(
+        self,
+        workspace_idx: int,
+        workspace_name: str,
+        query: str,
+        *,
+        k: int = 4,
+        storage_uri: Optional[str] = None,
+        alpha: float = 0.6,
+        candidate_pool: Optional[int] = None,
+        rrf_k: int = 60,
+    ) -> Sequence[Tuple[Document, float]]:
+        final_top_n = max(1, int(k))  # 최종으로 반환할 문서 개수를 최소 1개로 보정
+        candidate_pool = candidate_pool or max(final_top_n * 3, 30)  # 초기 후보 풀을 요청 개수 대비 넉넉하게 확보
+        candidate_pool = max(candidate_pool, final_top_n)  # 후보 수가 최종 반환 개수보다 작지 않도록 보정
+
+        alpha = max(0.1, min(float(alpha), 0.9))  # 하이브리드 가중치가 극단값을 벗어나지 않도록 제한
+        vector_k = max(1, int(round(candidate_pool * alpha)))  # 벡터 검색으로 가져올 문서 수를 가중치 비율로 계산
+        keyword_k = max(1, candidate_pool - vector_k)  # 키워드 검색으로 채울 문서 수도 최소 1개로 확보
+
+        store = self._get_vectorstore(
+            workspace_idx, workspace_name, storage_uri=storage_uri
+        )
+        vector_results = store.similarity_search_with_score(query, k=vector_k)
+
+        keyword_results: List[Tuple[Document, float]] = []
+        keyword_index = self._ensure_keyword_index(
+            workspace_idx, workspace_name, storage_uri=storage_uri
+        )
+        if keyword_index is not None:
+            tokens = _tokenize(query)
+            if tokens:
+                scores = keyword_index.retriever.get_scores(tokens)
+                ranked = sorted(
+                    enumerate(scores), key=lambda item: item[1], reverse=True
+                )
+                for idx, score in ranked:
+                    if score <= 0:
+                        continue
+                    keyword_results.append(
+                        (keyword_index.documents[idx], float(score))
+                    )
+                    if len(keyword_results) >= keyword_k:
+                        break
+
+        if not keyword_results:
+            return vector_results[:final_top_n]
+        if not vector_results:
+            return keyword_results[:final_top_n]
+
+        vector_docs = [doc for doc, _ in vector_results]
+        keyword_docs = [doc for doc, _ in keyword_results]
+        merged = self._rrf_merge(
+            vector_docs,
+            keyword_docs,
+            top_n=candidate_pool,
+            k_rrf=max(1, int(rrf_k)),
+        )
+        return merged[:final_top_n]
