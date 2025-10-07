@@ -1,4 +1,4 @@
-"""Workspace-scoped RAG search agent with hybrid retrieval and rerank support."""
+"""워크스페이스 기반 RAG 검색과 답변 생성을 담당하는 모듈."""
 from __future__ import annotations
 
 import logging
@@ -11,9 +11,8 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnableLambda, RunnableMap, RunnableSequence
 from langchain_openai import AzureChatOpenAI
-
-import cohere
 
 from rag.chroma import ChromaRAGService
 
@@ -30,7 +29,7 @@ class SearchStrategy(str, Enum):
 
 @dataclass(slots=True)
 class Citation:
-    """Metadata describing a single citation for UI consumption."""
+    """UI에서 활용할 단일 출처 정보를 표현한다."""
 
     page_id: Optional[str]
     page_title: Optional[str]
@@ -44,7 +43,7 @@ class Citation:
 
 @dataclass(slots=True)
 class SearchResult:
-    """High-level search output returned by the agent."""
+    """에이전트가 반환하는 상위 수준의 검색 결과."""
 
     question: str
     answer: str
@@ -52,7 +51,7 @@ class SearchResult:
 
 
 def _load_chat_config() -> Dict[str, str]:
-    """Load Azure OpenAI chat configuration from the environment."""
+    """환경 변수에서 Azure OpenAI 채팅 설정을 불러온다."""
 
     api_key = os.getenv("CM_AZURE_OPENAI_API_KEY")
     endpoint = os.getenv("CM_AZURE_OPENAI_ENDPOINT")
@@ -85,11 +84,7 @@ def _load_chat_config() -> Dict[str, str]:
 
 
 class WorkspaceRAGSearchAgent:
-    """Workspace-aware retrieval augmented generation search agent."""
-
-    _COHERE_MODEL_ENV = os.getenv("COHERE_MODEL_ENV")
-    _DEFAULT_COHERE_MODEL = os.getenv("DEFAULT_COHERE_MODEL")
-    _COHERE_PROVIDER = "cohere"
+    """워크스페이스 정보를 인지하고 RAG 검색을 수행하는 에이전트."""
 
     def __init__(self, rag_service: Optional[ChromaRAGService] = None) -> None:
         self._rag_service = rag_service or ChromaRAGService()
@@ -121,8 +116,7 @@ class WorkspaceRAGSearchAgent:
         )
         self._parser = StrOutputParser()
         self._chat_model: Optional[AzureChatOpenAI] = None
-        self._cohere_client = None
-        self._cohere_model: Optional[str] = None
+        self._response_chain: Optional[RunnableSequence] = None
 
     def _ensure_chat_model(self) -> AzureChatOpenAI:
         if self._chat_model is None:
@@ -139,19 +133,19 @@ class WorkspaceRAGSearchAgent:
             )
         return self._chat_model
 
-    def _ensure_cohere_client(self):
-        if self._cohere_client is not None:
-            return self._cohere_client
-
-        api_key = os.getenv("COHERE_API_KEY")
-        if not api_key:
-            raise RuntimeError("COHERE_API_KEY 환경 변수를 설정해야 Cohere rerank를 사용할 수 있습니다.")
-    
-
-        model = os.getenv(self._COHERE_MODEL_ENV, self._DEFAULT_COHERE_MODEL)
-        self._cohere_client = cohere.Client(api_key)
-        self._cohere_model = model
-        return self._cohere_client
+    def _ensure_response_chain(self) -> RunnableSequence:
+        if self._response_chain is None:
+            llm = self._ensure_chat_model()
+            self._response_chain = (
+                RunnableMap(
+                    question=RunnableLambda(lambda params: params["question"]),
+                    context=RunnableLambda(lambda params: params["context"]),
+                )
+                | self._prompt
+                | llm
+                | self._parser
+            )
+        return self._response_chain
 
     @staticmethod
     def _truncate(text: str, limit: int = 500) -> str:
@@ -216,49 +210,6 @@ class WorkspaceRAGSearchAgent:
                 or index_map.get(str(metadata.get("page_id"))),
             )
         return list(citations.values())
-
-    def _apply_cohere_rerank(
-        self,
-        docs_with_scores: Sequence[Tuple[Document, float]],
-        query: str,
-        top_n: int,
-    ) -> Sequence[Tuple[Document, float]]:
-        if not docs_with_scores:
-            return docs_with_scores
-        try:
-            client = self._ensure_cohere_client()
-        except RuntimeError as exc:
-            logger.warning("Cohere rerank 비활성화: %s", exc)
-            return docs_with_scores
-
-        documents = [doc.page_content for doc, _ in docs_with_scores]
-        try:
-            response = client.rerank(
-                model=self._cohere_model or self._DEFAULT_COHERE_MODEL,
-                query=query,
-                documents=documents,
-                top_n=min(top_n, len(documents)),
-            )
-        except Exception as exc:  # pragma: no cover - 외부 API 오류 방어
-            logger.warning("Cohere rerank 호출 실패: %s", exc)
-            return docs_with_scores
-
-        used_indices: set[int] = set()
-        reranked: List[Tuple[Document, float]] = []
-        for item in getattr(response, "results", []) or []:
-            index = getattr(item, "index", None)
-            score = getattr(item, "relevance_score", None)
-            if index is None or not (0 <= index < len(docs_with_scores)):
-                continue
-            doc, _ = docs_with_scores[index]
-            used_indices.add(index)
-            reranked.append((doc, float(score) if score is not None else 0.0))
-
-        # Append remaining documents preserving original order
-        for idx, (doc, score) in enumerate(docs_with_scores):
-            if idx not in used_indices:
-                reranked.append((doc, float(score) if score is not None else 0.0))
-        return reranked
 
     def _select_documents(
         self,
@@ -326,8 +277,6 @@ class WorkspaceRAGSearchAgent:
         top_k: int = 4,
         storage_uri: Optional[str] = None,
         strategy: SearchStrategy = SearchStrategy.VECTOR,
-        rerank_provider: Optional[str] = None,
-        rerank_top_n: Optional[int] = None,
         hybrid_alpha: float = 0.6,
         hybrid_rrf_k: int = 60,
     ) -> SearchResult:
@@ -339,8 +288,6 @@ class WorkspaceRAGSearchAgent:
         except Exception:  # pragma: no cover - 변환 실패 방어
             top_k = 4
 
-        rerank_top_n = rerank_top_n or top_k
-        rerank_top_n = max(1, min(rerank_top_n, 10))
         hybrid_alpha = float(hybrid_alpha)
         if not 0 < hybrid_alpha <= 1:
             hybrid_alpha = 0.6
@@ -349,9 +296,7 @@ class WorkspaceRAGSearchAgent:
         except Exception:  # pragma: no cover - 방어
             hybrid_rrf_k = 60
 
-        candidate_k = max(top_k, rerank_top_n)
-        if rerank_provider:
-            candidate_k = max(candidate_k, min(50, top_k * 3))
+        candidate_k = max(top_k, min(50, top_k * 2))
         if strategy is SearchStrategy.HYBRID:
             candidate_k = max(candidate_k, min(50, top_k * 5))
 
@@ -365,7 +310,7 @@ class WorkspaceRAGSearchAgent:
             storage_uri=storage_uri,
             hybrid_alpha=hybrid_alpha,
             hybrid_rrf_k=hybrid_rrf_k,
-        )
+            )
 
         if not docs_with_scores:
             if logger.isEnabledFor(logging.DEBUG):
@@ -381,22 +326,14 @@ class WorkspaceRAGSearchAgent:
                 citations=[],
             )
 
-        rerank_applied = False
-        if rerank_provider and rerank_provider.lower() == self._COHERE_PROVIDER:
-            docs_with_scores = self._apply_cohere_rerank(
-                docs_with_scores, query, rerank_top_n
-            )
-            rerank_applied = True
-
-        limit = min(top_k, rerank_top_n) if rerank_applied else top_k
-        docs_with_scores = list(docs_with_scores)[:limit]
+        docs_with_scores = list(docs_with_scores)[:top_k]
 
         context, index_map = self._build_context(docs_with_scores)
         if len(context) > 12000:  # 간단한 컨텍스트 길이 제한
             docs_with_scores = docs_with_scores[: max(2, top_k - 1)]
             context, index_map = self._build_context(docs_with_scores)
 
-        chain = self._prompt | self._ensure_chat_model() | self._parser
+        chain = self._ensure_response_chain()
         try:
             answer = chain.invoke({"question": query, "context": context}).strip()
         except Exception as exc:  # pragma: no cover - 외부 API 오류 방어

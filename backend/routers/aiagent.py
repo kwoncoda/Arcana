@@ -53,8 +53,6 @@ async def search_workspace_documents(
             top_k=payload.top_k,
             storage_uri=storage_uri,
             strategy=payload.strategy,
-            rerank_provider=payload.rerank_provider,
-            rerank_top_n=payload.rerank_top_n,
             hybrid_alpha=payload.hybrid_alpha
             if payload.hybrid_alpha is not None
             else 0.6,

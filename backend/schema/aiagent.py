@@ -21,16 +21,6 @@ class SearchRequest(BaseModel):
         default=SearchStrategy.VECTOR,
         description="검색 전략 (vector | keyword | hybrid)",
     )
-    rerank_provider: str | None = Field(
-        default=None,
-        description="결과 재정렬에 사용할 프로바이더 (예: cohere)",
-    )
-    rerank_top_n: int | None = Field(
-        default=None,
-        ge=1,
-        le=10,
-        description="재정렬 시 고려할 상위 문서 수",
-    )
     hybrid_alpha: float | None = Field(
         default=None,
         ge=0.1,
