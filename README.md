@@ -63,7 +63,12 @@ Arcana는 사내 문서와 외부 지식원을 연결해 검색과 생성형 답
      NOTION_CLIENT_SECRET=<Notion Secret>
      NOTION_REDIRECT_URI=http://localhost:8000/api/notion/oauth/callback
      ```
-      Azure OpenAI 임베딩 (사용 시)
+   - RAG 텍스트 분할
+     ```env
+     RAG_CHUNK_OVERLAP_RATIO=0.1
+     ```
+     `build_jsonl_records_from_pages`와 `build_documents_from_pages`는 청크 길이(`chunk_size`)의 이 비율만큼을 자동으로 겹쳐 분할합니다.
+   - Azure OpenAI 임베딩 (사용 시)
      ```env
      EM_AZURE_OPENAI_API_KEY=<Azure OpenAI API Key>
      EM_AZURE_OPENAI_ENDPOINT=https://<리소스-이름>.openai.azure.com
