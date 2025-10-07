@@ -80,6 +80,16 @@ class SearchResult:
     citations: List[Citation]
 
 
+@dataclass(slots=True)
+class RetrievalPayload:
+    """생성형 작업을 위해 수집한 RAG 컨텍스트."""
+
+    question: str
+    context: str
+    citations: List[Citation]
+    documents: Sequence[Tuple[Document, float]]
+
+
 def _load_chat_config() -> Dict[str, str]:
     """환경 변수에서 Azure OpenAI 채팅 설정을 불러온다."""
 
@@ -230,7 +240,7 @@ class WorkspaceRAGSearchAgent:
                     if metadata.get("chunk_index") is not None
                     else None
                 )
-            except (TypeError, ValueError): 
+            except (TypeError, ValueError):
                 chunk_index = None
             key = str(chunk_id) if chunk_id else f"fallback-{len(citations)}"
             citations[key] = Citation(
@@ -266,7 +276,7 @@ class WorkspaceRAGSearchAgent:
                 best_url = citation.page_url
         return best_url
 
-    def search(
+    def _prepare_candidate_documents(
         self,
         *,
         workspace_idx: int,
@@ -276,7 +286,9 @@ class WorkspaceRAGSearchAgent:
         storage_uri: Optional[str] = None,
         hybrid_alpha: Optional[float] = None,
         hybrid_rrf_k: Optional[int] = None,
-    ) -> SearchResult:
+    ) -> Tuple[List[Tuple[Document, float]], Dict[str, int], str]:
+        """질문과 워크스페이스 정보를 토대로 컨텍스트 빌딩에 필요한 문서를 수집한다."""
+
         if not query.strip():
             raise ValueError("질문 내용이 비어있습니다.")
 
@@ -323,6 +335,38 @@ class WorkspaceRAGSearchAgent:
             rrf_k=hybrid_rrf_k,
         )
 
+        docs_with_scores = list(docs_with_scores)
+        if not docs_with_scores:
+            return [], {}, ""
+
+        docs_with_scores = docs_with_scores[:top_k]
+        context, index_map = self._build_context(docs_with_scores)
+        if len(context) > 12000:  # 간단한 컨텍스트 길이 제한
+            docs_with_scores = docs_with_scores[: max(2, top_k - 1)]
+            context, index_map = self._build_context(docs_with_scores)
+        return docs_with_scores, index_map, context
+
+    def search(
+        self,
+        *,
+        workspace_idx: int,
+        workspace_name: str,
+        query: str,
+        top_k: Optional[int] = None,
+        storage_uri: Optional[str] = None,
+        hybrid_alpha: Optional[float] = None,
+        hybrid_rrf_k: Optional[int] = None,
+    ) -> SearchResult:
+        docs_with_scores, index_map, context = self._prepare_candidate_documents(
+            workspace_idx=workspace_idx,
+            workspace_name=workspace_name,
+            query=query,
+            top_k=top_k,
+            storage_uri=storage_uri,
+            hybrid_alpha=hybrid_alpha,
+            hybrid_rrf_k=hybrid_rrf_k,
+        )
+
         if not docs_with_scores:
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(
@@ -335,13 +379,6 @@ class WorkspaceRAGSearchAgent:
                 answer="연결된 워크스페이스에서 관련 문서를 찾을 수 없습니다.",
                 citations=[],
             )
-
-        docs_with_scores = list(docs_with_scores)[:top_k]
-
-        context, index_map = self._build_context(docs_with_scores)
-        if len(context) > 12000:  # 간단한 컨텍스트 길이 제한
-            docs_with_scores = docs_with_scores[: max(2, top_k - 1)]
-            context, index_map = self._build_context(docs_with_scores)
 
         chain = self._ensure_response_chain()
         try:
@@ -359,3 +396,35 @@ class WorkspaceRAGSearchAgent:
         if top_url and top_url not in answer:
             answer = f"{answer}\n\n{top_url}"
         return SearchResult(question=query, answer=answer, citations=citations)
+
+    def retrieve_for_generation(
+        self,
+        *,
+        workspace_idx: int,
+        workspace_name: str,
+        query: str,
+        top_k: Optional[int] = None,
+        storage_uri: Optional[str] = None,
+        hybrid_alpha: Optional[float] = None,
+        hybrid_rrf_k: Optional[int] = None,
+    ) -> RetrievalPayload:
+        """생성형 요청을 위해 컨텍스트와 근거를 반환한다."""
+
+        docs_with_scores, index_map, context = self._prepare_candidate_documents(
+            workspace_idx=workspace_idx,
+            workspace_name=workspace_name,
+            query=query,
+            top_k=top_k,
+            storage_uri=storage_uri,
+            hybrid_alpha=hybrid_alpha,
+            hybrid_rrf_k=hybrid_rrf_k,
+        )
+
+        citations = self._build_citations(docs_with_scores, index_map)
+
+        return RetrievalPayload(
+            question=query,
+            context=context,
+            citations=citations,
+            documents=tuple(docs_with_scores),
+        )
