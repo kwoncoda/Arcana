@@ -165,10 +165,10 @@ class ChromaRAGService:
         store = self._get_vectorstore(
             workspace_idx, workspace_name, storage_uri=storage_uri
         )
-        raw = store.get(include=["documents", "metadatas", "ids"])
+        raw = store.get(include=["documents", "metadatas"])
+        ids = raw.get("ids") or []
         documents = raw.get("documents") or []
         metadatas = raw.get("metadatas") or []
-        ids = raw.get("ids") or []
         if not documents:
             return None
 
