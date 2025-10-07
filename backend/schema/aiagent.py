@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Annotated, List
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, StringConstraints
 
-from ai_module.rag_search import Citation, SearchResult, SearchStrategy
+from ai_module.rag_search import Citation, SearchResult
 
 QueryStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
 
@@ -16,17 +16,6 @@ class SearchRequest(BaseModel):
     """워크스페이스 문서 검색 요청 페이로드."""
 
     query: QueryStr
-    top_k: int = Field(default=4, ge=1, le=16, description="반환할 최대 문서 수")
-    strategy: SearchStrategy = Field(
-        default=SearchStrategy.VECTOR,
-        description="검색 전략 (vector | keyword | hybrid)",
-    )
-    hybrid_alpha: float | None = Field(
-        default=None,
-        ge=0.1,
-        le=1.0,
-        description="하이브리드 검색 시 벡터 가중치 (0.1~1.0)",
-    )
 
 
 class SearchCitation(BaseModel):

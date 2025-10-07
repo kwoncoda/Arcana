@@ -50,12 +50,7 @@ async def search_workspace_documents(
             workspace_idx=context.workspace.idx,
             workspace_name=context.workspace.name,
             query=payload.query,
-            top_k=payload.top_k,
             storage_uri=storage_uri,
-            strategy=payload.strategy,
-            hybrid_alpha=payload.hybrid_alpha
-            if payload.hybrid_alpha is not None
-            else 0.6,
         )
     except ValueError as exc:
         raise HTTPException(
