@@ -5,7 +5,6 @@ import logging
 import os
 from collections import OrderedDict
 from dataclasses import dataclass
-from enum import Enum
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from langchain_core.documents import Document
@@ -19,12 +18,43 @@ from rag.chroma import ChromaRAGService
 logger = logging.getLogger("arcana")
 
 
-class SearchStrategy(str, Enum):
-    """검색 소스"""
+def _load_top_k_from_env(default: int = 4) -> int:
+    """환경 변수에서 top_k 기본값을 읽고 안전하게 보정한다."""
 
-    VECTOR = "vector"
-    KEYWORD = "keyword"
-    HYBRID = "hybrid"
+    raw = os.getenv("TOP_K")
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(1, min(value, 10))
+
+
+def _load_hybrid_alpha_from_env(default: float = 0.6) -> float:
+    """환경 변수에서 하이브리드 가중치를 읽어 안정 범위로 제한한다."""
+
+    raw = os.getenv("HYBRID_ALPHA")
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(0.1, min(value, 0.9))
+
+
+def _load_hybrid_rrf_k_from_env(default: int = 60) -> int:
+    """환경 변수에서 Reciprocal Rank Fusion 파라미터를 불러온다."""
+
+    raw = os.getenv("HYBRID_RRF_K")
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(1, min(value, 200))
 
 
 @dataclass(slots=True)
@@ -211,113 +241,68 @@ class WorkspaceRAGSearchAgent:
             )
         return list(citations.values())
 
-    def _select_documents(
-        self,
-        *,
-        strategy: SearchStrategy,
-        workspace_idx: int,
-        workspace_name: str,
-        query: str,
-        top_k: int,
-        candidate_k: int,
-        storage_uri: Optional[str],
-        hybrid_alpha: float,
-        hybrid_rrf_k: int,
-    ) -> Sequence[Tuple[Document, float]]:
-        if strategy is SearchStrategy.VECTOR:
-            retriever = self._rag_service.get_retriever(
-                workspace_idx,
-                workspace_name,
-                storage_uri=storage_uri,
-                search_kwargs={"k": candidate_k},
-            )
-            return self._rag_service.similarity_search_with_score(
-                workspace_idx,
-                workspace_name,
-                query,
-                k=candidate_k,
-                storage_uri=storage_uri,
-                retriever=retriever,
-            )
-
-        if strategy is SearchStrategy.KEYWORD:
-            return self._rag_service.keyword_search_with_score(
-                workspace_idx,
-                workspace_name,
-                query,
-                k=candidate_k,
-                storage_uri=storage_uri,
-            )
-
-        if strategy is SearchStrategy.HYBRID:
-            hybrid_pool = max(candidate_k, top_k)
-            hybrid_pool = max(
-                hybrid_pool,
-                min(60, max(candidate_k * 3, top_k * 5, 30)),
-            )
-            return self._rag_service.hybrid_search_with_score(
-                workspace_idx,
-                workspace_name,
-                query,
-                k=candidate_k,
-                storage_uri=storage_uri,
-                alpha=hybrid_alpha,
-                candidate_pool=hybrid_pool,
-                rrf_k=hybrid_rrf_k,
-            )
-
-        raise ValueError(f"지원하지 않는 검색 전략입니다: {strategy}")
-
     def search(
         self,
         *,
         workspace_idx: int,
         workspace_name: str,
         query: str,
-        top_k: int = 4,
+        top_k: Optional[int] = None,
         storage_uri: Optional[str] = None,
-        strategy: SearchStrategy = SearchStrategy.VECTOR,
-        hybrid_alpha: float = 0.6,
-        hybrid_rrf_k: int = 60,
+        hybrid_alpha: Optional[float] = None,
+        hybrid_rrf_k: Optional[int] = None,
     ) -> SearchResult:
         if not query.strip():
             raise ValueError("질문 내용이 비어있습니다.")
 
-        try:
-            top_k = max(1, min(int(top_k), 10))
-        except Exception:  # pragma: no cover - 변환 실패 방어
-            top_k = 4
+        if top_k is None:
+            top_k = _load_top_k_from_env()
+        else:
+            try:
+                top_k = max(1, min(int(top_k), 10))
+            except Exception:  # pragma: no cover - 변환 실패 방어
+                top_k = _load_top_k_from_env()
 
-        hybrid_alpha = float(hybrid_alpha)
-        if not 0 < hybrid_alpha <= 1:
-            hybrid_alpha = 0.6
-        try:
-            hybrid_rrf_k = max(1, int(hybrid_rrf_k))
-        except Exception:  # pragma: no cover - 방어
-            hybrid_rrf_k = 60
+        if hybrid_alpha is None:
+            hybrid_alpha = _load_hybrid_alpha_from_env()
+        else:
+            try:
+                hybrid_alpha = float(hybrid_alpha)
+            except Exception:  # pragma: no cover - 변환 실패 방어
+                hybrid_alpha = _load_hybrid_alpha_from_env()
+            else:
+                hybrid_alpha = max(0.1, min(hybrid_alpha, 0.9))
+        if hybrid_rrf_k is None:
+            hybrid_rrf_k = _load_hybrid_rrf_k_from_env()
+        else:
+            try:
+                hybrid_rrf_k = max(1, min(int(hybrid_rrf_k), 200))
+            except Exception:  # pragma: no cover - 방어
+                hybrid_rrf_k = _load_hybrid_rrf_k_from_env()
 
-        candidate_k = max(top_k, min(50, top_k * 2))
-        if strategy is SearchStrategy.HYBRID:
-            candidate_k = max(candidate_k, min(50, top_k * 5))
+        candidate_k = max(top_k, min(50, top_k * 5))
+        hybrid_pool = max(candidate_k, top_k)
+        hybrid_pool = max(
+            hybrid_pool,
+            min(60, max(candidate_k * 3, top_k * 5, 30)),
+        )
 
-        docs_with_scores = self._select_documents(
-            strategy=strategy,
-            workspace_idx=workspace_idx,
-            workspace_name=workspace_name,
-            query=query,
-            top_k=top_k,
-            candidate_k=candidate_k,
+        docs_with_scores = self._rag_service.hybrid_search_with_score(
+            workspace_idx,
+            workspace_name,
+            query,
+            k=candidate_k,
             storage_uri=storage_uri,
-            hybrid_alpha=hybrid_alpha,
-            hybrid_rrf_k=hybrid_rrf_k,
-            )
+            alpha=hybrid_alpha,
+            candidate_pool=hybrid_pool,
+            rrf_k=hybrid_rrf_k,
+        )
 
         if not docs_with_scores:
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(
-                    "RAG 검색 결과 없음: workspace_idx=%s strategy=%s query=%s",
+                    "RAG 검색 결과 없음: workspace_idx=%s query=%s",
                     workspace_idx,
-                    strategy,
                     query,
                 )
             return SearchResult(
