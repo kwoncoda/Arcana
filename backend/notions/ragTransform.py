@@ -1,4 +1,4 @@
-"""Utilities for transforming Notion pages into RAG-friendly artefacts."""
+"""노션 페이지를 RAG로 변환하기 위한 유틸리티"""
 
 from __future__ import annotations
 

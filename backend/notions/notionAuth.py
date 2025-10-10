@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from models import NotionOauthCredentials, DataSource
 
-# ---- Env ----
+
 CLIENT_ID = os.getenv("NOTION_CLIENT_ID")
 CLIENT_SECRET = os.getenv("NOTION_CLIENT_SECRET")
 REDIRECT_URI = os.getenv("NOTION_REDIRECT_URI")
@@ -31,6 +31,11 @@ _REFRESH_SAFETY_WINDOW = timedelta(seconds=90)
 # ---- In-memory state (redis로 바꿔야함) ----
 _STATE: dict[str, datetime] = {}
 _STATE_TTL = timedelta(minutes=10)
+
+
+class NotionCredentialError(Exception):
+    """노션 자격증명이 없거나 연결되지 않았을 때 사용하는 예외."""
+
 
 def _b64e(d: dict) -> str:
     raw = json.dumps(d, separators=(",", ":"), ensure_ascii=False).encode()
@@ -158,6 +163,34 @@ def get_credential_by_workspace_id(
 
     if not credential:
         raise LookupError("해당 workspace_id에 대한 Notion 자격증명이 없습니다.")
+
+    return credential
+
+
+def get_connected_user_credential(
+    db: Session, *, workspace_idx: int, user_idx: int
+) -> NotionOauthCredentials:
+    """워크스페이스 소유 데이터를 기반으로 연결된 Notion 자격증명을 조회한다."""
+
+    data_source = db.scalar(
+        select(DataSource).where(
+            DataSource.workspace_idx == workspace_idx,
+            DataSource.type == "notion",
+        )
+    )
+
+    if not data_source or data_source.status != "connected":
+        raise NotionCredentialError("Notion 연동이 필요합니다.")
+
+    credential = db.scalar(
+        select(NotionOauthCredentials).where(
+            NotionOauthCredentials.data_source_idx == data_source.idx,
+            NotionOauthCredentials.user_idx == user_idx,
+        )
+    )
+
+    if not credential or not credential.access_token:
+        raise NotionCredentialError("Notion 연동 토큰을 찾을 수 없습니다.")
 
     return credential
 

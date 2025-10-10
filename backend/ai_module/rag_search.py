@@ -15,6 +15,8 @@ from langchain_openai import AzureChatOpenAI
 
 from rag.chroma import ChromaRAGService
 
+from .ai_config import _gpt5_load_chat_config
+
 logger = logging.getLogger("arcana")
 
 
@@ -80,37 +82,17 @@ class SearchResult:
     citations: List[Citation]
 
 
-def _load_chat_config() -> Dict[str, str]:
-    """환경 변수에서 Azure OpenAI 채팅 설정을 불러온다."""
+@dataclass(slots=True)
+class RetrievalPayload:
+    """생성형 작업을 위해 수집한 RAG 컨텍스트."""
 
-    api_key = os.getenv("CM_AZURE_OPENAI_API_KEY")
-    endpoint = os.getenv("CM_AZURE_OPENAI_ENDPOINT")
-    api_version = os.getenv("CM_AZURE_OPENAI_API_VERSION")
-    deployment = os.getenv("CM_AZURE_OPENAI_CHAT_DEPLOYMENT")
-    model = os.getenv("CM_AZURE_OPENAI_CHAT_MODEL")
+    question: str
+    context: str
+    citations: List[Citation]
+    documents: Sequence[Tuple[Document, float]]
 
-    missing = [
-        name
-        for name, value in [
-            ("CM_AZURE_OPENAI_API_KEY", api_key),
-            ("CM_AZURE_OPENAI_ENDPOINT", endpoint),
-            ("CM_AZURE_OPENAI_API_VERSION", api_version),
-            ("CM_AZURE_OPENAI_CHAT_DEPLOYMENT", deployment),
-        ]
-        if not value
-    ]
-    if missing:
-        raise RuntimeError(
-            "다음 Azure OpenAI 채팅 환경 변수를 설정하세요: " + ", ".join(missing)
-        )
 
-    return {
-        "api_key": api_key,
-        "endpoint": endpoint,
-        "api_version": api_version,
-        "deployment": deployment,
-        "model": model or deployment,
-    }
+
 
 
 class WorkspaceRAGSearchAgent:
@@ -130,7 +112,6 @@ class WorkspaceRAGSearchAgent:
                         "- 답변 마지막 줄에는 당신이 가장 관련성이 높다고 판단한 단일 문서의 URL을 그대로 적으세요. 다른 설명 없이 URL만 단독으로 작성합니다.\n"
                         "- URL을 선택할 때 컨텍스트에 제공된 유사도 점수가 가장 높은 정보를 우선 고려하세요.\n"
                         "- 관련 근거가 부족하면 솔직히 모른다고 답하세요.\n"
-                        "- 기본 응답 언어는 한국어입니다."
                     ),
                 ),
                 (
@@ -152,7 +133,7 @@ class WorkspaceRAGSearchAgent:
 
     def _ensure_chat_model(self) -> AzureChatOpenAI:
         if self._chat_model is None:
-            config = _load_chat_config()
+            config = _gpt5_load_chat_config()
             self._chat_model = AzureChatOpenAI(
                 azure_endpoint=config["endpoint"],
                 api_key=config["api_key"],
@@ -230,7 +211,7 @@ class WorkspaceRAGSearchAgent:
                     if metadata.get("chunk_index") is not None
                     else None
                 )
-            except (TypeError, ValueError): 
+            except (TypeError, ValueError):
                 chunk_index = None
             key = str(chunk_id) if chunk_id else f"fallback-{len(citations)}"
             citations[key] = Citation(
@@ -266,7 +247,7 @@ class WorkspaceRAGSearchAgent:
                 best_url = citation.page_url
         return best_url
 
-    def search(
+    def _prepare_candidate_documents(
         self,
         *,
         workspace_idx: int,
@@ -276,7 +257,9 @@ class WorkspaceRAGSearchAgent:
         storage_uri: Optional[str] = None,
         hybrid_alpha: Optional[float] = None,
         hybrid_rrf_k: Optional[int] = None,
-    ) -> SearchResult:
+    ) -> Tuple[List[Tuple[Document, float]], Dict[str, int], str]:
+        """질문과 워크스페이스 정보를 토대로 컨텍스트 빌딩에 필요한 문서를 수집한다."""
+
         if not query.strip():
             raise ValueError("질문 내용이 비어있습니다.")
 
@@ -323,6 +306,38 @@ class WorkspaceRAGSearchAgent:
             rrf_k=hybrid_rrf_k,
         )
 
+        docs_with_scores = list(docs_with_scores)
+        if not docs_with_scores:
+            return [], {}, ""
+
+        docs_with_scores = docs_with_scores[:top_k]
+        context, index_map = self._build_context(docs_with_scores)
+        if len(context) > 12000:  # 간단한 컨텍스트 길이 제한
+            docs_with_scores = docs_with_scores[: max(2, top_k - 1)]
+            context, index_map = self._build_context(docs_with_scores)
+        return docs_with_scores, index_map, context
+
+    def search(
+        self,
+        *,
+        workspace_idx: int,
+        workspace_name: str,
+        query: str,
+        top_k: Optional[int] = None,
+        storage_uri: Optional[str] = None,
+        hybrid_alpha: Optional[float] = None,
+        hybrid_rrf_k: Optional[int] = None,
+    ) -> SearchResult:
+        docs_with_scores, index_map, context = self._prepare_candidate_documents(
+            workspace_idx=workspace_idx,
+            workspace_name=workspace_name,
+            query=query,
+            top_k=top_k,
+            storage_uri=storage_uri,
+            hybrid_alpha=hybrid_alpha,
+            hybrid_rrf_k=hybrid_rrf_k,
+        )
+
         if not docs_with_scores:
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(
@@ -332,16 +347,9 @@ class WorkspaceRAGSearchAgent:
                 )
             return SearchResult(
                 question=query,
-                answer="연결된 워크스페이스에서 관련 문서를 찾을 수 없습니다.",
+                answer="관련 문서를 찾을 수 없습니다.",
                 citations=[],
             )
-
-        docs_with_scores = list(docs_with_scores)[:top_k]
-
-        context, index_map = self._build_context(docs_with_scores)
-        if len(context) > 12000:  # 간단한 컨텍스트 길이 제한
-            docs_with_scores = docs_with_scores[: max(2, top_k - 1)]
-            context, index_map = self._build_context(docs_with_scores)
 
         chain = self._ensure_response_chain()
         try:
@@ -359,3 +367,35 @@ class WorkspaceRAGSearchAgent:
         if top_url and top_url not in answer:
             answer = f"{answer}\n\n{top_url}"
         return SearchResult(question=query, answer=answer, citations=citations)
+
+    def retrieve_for_generation(
+        self,
+        *,
+        workspace_idx: int,
+        workspace_name: str,
+        query: str,
+        top_k: Optional[int] = None,
+        storage_uri: Optional[str] = None,
+        hybrid_alpha: Optional[float] = None,
+        hybrid_rrf_k: Optional[int] = None,
+    ) -> RetrievalPayload:
+        """생성형 요청을 위해 컨텍스트와 근거를 반환한다."""
+
+        docs_with_scores, index_map, context = self._prepare_candidate_documents(
+            workspace_idx=workspace_idx,
+            workspace_name=workspace_name,
+            query=query,
+            top_k=top_k,
+            storage_uri=storage_uri,
+            hybrid_alpha=hybrid_alpha,
+            hybrid_rrf_k=hybrid_rrf_k,
+        )
+
+        citations = self._build_citations(docs_with_scores, index_map)
+
+        return RetrievalPayload(
+            question=query,
+            context=context,
+            citations=citations,
+            documents=tuple(docs_with_scores),
+        )

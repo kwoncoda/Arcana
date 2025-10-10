@@ -29,6 +29,8 @@ from notions.notionAuth import (
     verify_state,
     exchange_code_for_tokens,
     apply_oauth_tokens,
+    get_connected_user_credential,
+    NotionCredentialError,
 )
 
 from notions.notionPull import (
@@ -161,33 +163,17 @@ async def notion_oauth_callback(
 def _get_connected_credential(
     db: Session, *, user: User, workspace: Workspace
 ) -> NotionOauthCredentials:
-    data_source = db.scalar(
-        select(DataSource).where(
-            DataSource.workspace_idx == workspace.idx,
-            DataSource.type == "notion",
+    try:
+        return get_connected_user_credential(
+            db,
+            workspace_idx=workspace.idx,
+            user_idx=user.idx,
         )
-    )
-
-    if not data_source or data_source.status != "connected":
+    except NotionCredentialError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Notion 연동이 필요합니다.",
-        )
-
-    credential = db.scalar(
-        select(NotionOauthCredentials).where(
-            NotionOauthCredentials.data_source_idx == data_source.idx,
-            NotionOauthCredentials.user_idx == user.idx,
-        )
-    )
-
-    if not credential or not credential.access_token:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Notion 연동 토큰을 찾을 수 없습니다.",
-        )
-
-    return credential
+            detail=str(exc),
+        ) from exc
 
 
 @router.post(

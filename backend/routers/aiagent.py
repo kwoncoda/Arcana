@@ -8,9 +8,10 @@ from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from starlette.concurrency import run_in_threadpool
+from notion_client.errors import APIResponseError
 
-from ai_module import WorkspaceRAGSearchAgent
+from ai_module import WorkspaceAgentOrchestrator
+from notions.notionAuth import NotionCredentialError
 from dependencies import get_current_user
 from models import User
 from schema.aiagent import SearchRequest, SearchResponse
@@ -20,7 +21,7 @@ from utils.workspace import WorkspaceResolutionError, get_workspace_context
 router = APIRouter(prefix="/aiagent", tags=["aiagent"])
 
 logger = logging.getLogger("arcana")
-_search_agent = WorkspaceRAGSearchAgent()
+_orchestrator = WorkspaceAgentOrchestrator()
 
 
 @router.post(
@@ -47,17 +48,29 @@ async def search_workspace_documents(
     storage_uri = context.rag_index.storage_uri if context.rag_index else None
 
     try:
-        result = await run_in_threadpool(
-            _search_agent.search,
-            workspace_idx=context.workspace.idx,
-            workspace_name=context.workspace.name,
-            query=payload.query,
+        execution = await _orchestrator.run(
+            db=db,
+            user_idx=user.idx,
+            workspace=context.workspace,
             storage_uri=storage_uri,
+            query=payload.query,
         )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
+        ) from exc
+    except NotionCredentialError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except APIResponseError as exc:
+        status_code = exc.status or status.HTTP_502_BAD_GATEWAY
+        detail = getattr(exc, "message", str(exc))
+        raise HTTPException(
+            status_code=status_code,
+            detail=f"Notion API 호출 실패: {detail}",
         ) from exc
     except RuntimeError as exc:
         raise HTTPException(
@@ -71,16 +84,20 @@ async def search_workspace_documents(
             detail="RAG 검색 중 오류가 발생했습니다.",
         ) from exc
 
-    response = SearchResponse.from_result(result)
+    response = SearchResponse.from_execution(execution)
 
     if logger.isEnabledFor(logging.DEBUG):
         log_payload = {
-            "question": result.question,
+            "mode": execution.mode,
+            "question": execution.result.question,
             "answer": response.answer,
-            "citations": [asdict(citation) for citation in result.citations],
+            "citations": [
+                asdict(citation) for citation in execution.result.citations
+            ],
+            "notion_page_id": execution.notion_page_id,
         }
         logger.debug(
-            "RAG search response: %s",
+            "Agent response: %s",
             json.dumps(log_payload, ensure_ascii=False),
         )
 
