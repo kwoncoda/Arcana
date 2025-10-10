@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from models import NotionOauthCredentials, DataSource
 
-# ---- Env ----
+
 CLIENT_ID = os.getenv("NOTION_CLIENT_ID")
 CLIENT_SECRET = os.getenv("NOTION_CLIENT_SECRET")
 REDIRECT_URI = os.getenv("NOTION_REDIRECT_URI")

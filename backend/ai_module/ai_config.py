@@ -66,3 +66,36 @@ def _decision_load_chat_config() -> Dict[str, str]:
         "deployment": deployment,
         "model": model or deployment,
     }
+    
+
+def _EM_load_azure_openai_config() -> dict[str, str]:
+    """Azure OpenAI 임베딩 구성을 로드하고 검증"""
+
+    api_key = os.getenv("EM_AZURE_OPENAI_API_KEY")
+    endpoint = os.getenv("EM_AZURE_OPENAI_ENDPOINT")
+    api_version = os.getenv("EM_AZURE_OPENAI_API_VERSION")
+    deployment = os.getenv("EM_AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
+    model = os.getenv("EM_AZURE_OPENAI_EMBEDDING_MODEL")
+
+    missing = [
+        name
+        for name, value in [
+            ("EM_AZURE_OPENAI_API_KEY", api_key),
+            ("EM_AZURE_OPENAI_ENDPOINT", endpoint),
+            ("EM_AZURE_OPENAI_API_VERSION", api_version),
+            ("EM_AZURE_OPENAI_EMBEDDING_DEPLOYMENT", deployment),
+        ]
+        if not value
+    ]
+    if missing:
+        raise RuntimeError(
+            "다음 Azure OpenAI 환경 변수가 필요합니다: " + ", ".join(missing)
+        )
+
+    return {
+        "api_key": api_key,
+        "endpoint": endpoint,
+        "api_version": api_version,
+        "deployment": deployment,
+        "model": model or deployment,
+    }

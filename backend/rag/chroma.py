@@ -16,6 +16,8 @@ from rank_bm25 import BM25Okapi
 
 from utils.workspace_storage import ensure_workspace_storage, workspace_storage_path
 
+from ai_module.ai_config import _EM_load_azure_openai_config
+
 _DEFAULT_STORAGE_ROOT = workspace_storage_path("_").parent
 _TOKEN_PATTERN = re.compile(r"[\w가-힣]+", re.UNICODE)
 
@@ -27,39 +29,6 @@ class _KeywordIndex:
     retriever: BM25Okapi
     documents: List[Document]
     ids: List[str]
-
-
-def _load_azure_openai_config() -> dict[str, str]:
-    """Azure OpenAI 임베딩 구성을 로드하고 검증"""
-
-    api_key = os.getenv("EM_AZURE_OPENAI_API_KEY")
-    endpoint = os.getenv("EM_AZURE_OPENAI_ENDPOINT")
-    api_version = os.getenv("EM_AZURE_OPENAI_API_VERSION")
-    deployment = os.getenv("EM_AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
-    model = os.getenv("EM_AZURE_OPENAI_EMBEDDING_MODEL")
-
-    missing = [
-        name
-        for name, value in [
-            ("EM_AZURE_OPENAI_API_KEY", api_key),
-            ("EM_AZURE_OPENAI_ENDPOINT", endpoint),
-            ("EM_AZURE_OPENAI_API_VERSION", api_version),
-            ("EM_AZURE_OPENAI_EMBEDDING_DEPLOYMENT", deployment),
-        ]
-        if not value
-    ]
-    if missing:
-        raise RuntimeError(
-            "다음 Azure OpenAI 환경 변수가 필요합니다: " + ", ".join(missing)
-        )
-
-    return {
-        "api_key": api_key,
-        "endpoint": endpoint,
-        "api_version": api_version,
-        "deployment": deployment,
-        "model": model or deployment,
-    }
 
 
 def _tokenize(text: str) -> List[str]:
@@ -109,7 +78,7 @@ class ChromaRAGService:
         return (workspace_idx, str(persist_directory.resolve()))
 
     def _create_embeddings(self) -> AzureOpenAIEmbeddings:
-        config = _load_azure_openai_config()
+        config = _EM_load_azure_openai_config()
         return AzureOpenAIEmbeddings(
             azure_endpoint=config["endpoint"],
             api_key=config["api_key"],

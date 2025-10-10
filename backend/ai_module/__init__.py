@@ -10,4 +10,5 @@ __all__ = [
     "SearchResult",
     "Citation",
     "RetrievalPayload",
+    "_EM_load_azure_openai_config",
 ]
