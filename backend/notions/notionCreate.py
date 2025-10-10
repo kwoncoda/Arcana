@@ -164,7 +164,7 @@ async def create_page_from_markdown(
             children=_markdown_to_blocks(markdown),
         )
     finally:
-        await client.close()
+        await client.aclose()
 
     page_id = response.get("id") or ""
     url = response.get("url") or ""

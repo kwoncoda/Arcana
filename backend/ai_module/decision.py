@@ -4,13 +4,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Optional
 
-from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableSequence
 from langchain_openai import AzureChatOpenAI
 from pydantic import BaseModel, Field
 
-from .rag_search import _load_chat_config
+from .ai_config import _decision_load_chat_config
 
 
 class _DecisionSchema(BaseModel):
@@ -52,7 +51,6 @@ class DecisionAgent:
     """사용자 요청을 분석하여 다음 행동을 결정하는 에이전트."""
 
     def __init__(self) -> None:
-        parser = JsonOutputParser(pydantic_object=_DecisionSchema)
         self._prompt = ChatPromptTemplate.from_messages(
             [
                 (
@@ -64,9 +62,8 @@ class DecisionAgent:
                         "2. generate: 사용자가 새로운 문서를 작성하거나 초안을 만들어 달라고 할 때\n"
                         "생성 작업이 기존 RAG 문서 기반으로 이루어져야 한다면 use_rag를 true로 설정하세요."
                         " 예: '지난 회의록을 참고해서 보고서 작성해줘'\n"
-                        "사용자가 신규 기획서/문서를 만들어 달라고만 하고 특정 문서를 참조하라고 하지 않으면"
-                        " use_rag는 false입니다.\n"
-                        "반드시 {format_instructions} 형식의 JSON으로만 답변하세요."
+                        " 사용자가 특정 ‘기존 문서’를 참조하라고 명시하지 않으면 use_rag는 기본적으로 false입니다.\n"
+                        "출력은 무조건 JSON으로만 답변하세요."
                     ),
                 ),
                 (
@@ -77,14 +74,13 @@ class DecisionAgent:
                     ),
                 ),
             ]
-        ).partial(format_instructions=parser.get_format_instructions())
-        self._parser = parser
+        )
         self._chain: Optional[RunnableSequence] = None
         self._llm: Optional[AzureChatOpenAI] = None
 
     def _ensure_llm(self) -> AzureChatOpenAI:
         if self._llm is None:
-            config = _load_chat_config()
+            config = _decision_load_chat_config()
             self._llm = AzureChatOpenAI(
                 azure_endpoint=config["endpoint"],
                 api_key=config["api_key"],
@@ -92,26 +88,27 @@ class DecisionAgent:
                 azure_deployment=config["deployment"],
                 model=config["model"],
                 temperature=0.0,
-                max_tokens=300,
+                max_tokens=1024,
                 max_retries=3,
             )
         return self._llm
 
     def _ensure_chain(self) -> RunnableSequence:
         if self._chain is None:
-            self._chain = self._prompt | self._ensure_llm() | self._parser
+            llm = self._ensure_llm().with_structured_output(_DecisionSchema)
+            self._chain = self._prompt | llm
         return self._chain
 
     async def decide(self, query: str, extra_context: str = "") -> AgentDecision:
         """LLM을 호출해 행동 결정을 내린다."""
 
         chain = self._ensure_chain()
-        payload = await chain.ainvoke({"query": query, "extra_context": extra_context})
+        decision: _DecisionSchema = await chain.ainvoke({"query": query, "extra_context": extra_context})
         return AgentDecision(
-            action=payload.action,
-            use_rag=payload.use_rag,
-            rationale=payload.rationale.strip(),
-            title_hint=payload.title_hint.strip() if payload.title_hint else None,
-            instructions=payload.instructions.strip() if payload.instructions else None,
+            action=decision.action,
+            use_rag=decision.use_rag,
+            rationale=decision.rationale.strip() if decision.rationale else "",
+            title_hint=decision.title_hint.strip() if decision.title_hint else None,
+            instructions=decision.instructions.strip() if decision.instructions else None,
         )
 

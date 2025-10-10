@@ -15,6 +15,8 @@ from langchain_openai import AzureChatOpenAI
 
 from rag.chroma import ChromaRAGService
 
+from .ai_config import _gpt5_load_chat_config
+
 logger = logging.getLogger("arcana")
 
 
@@ -90,37 +92,7 @@ class RetrievalPayload:
     documents: Sequence[Tuple[Document, float]]
 
 
-def _load_chat_config() -> Dict[str, str]:
-    """환경 변수에서 Azure OpenAI 채팅 설정을 불러온다."""
 
-    api_key = os.getenv("CM_AZURE_OPENAI_API_KEY")
-    endpoint = os.getenv("CM_AZURE_OPENAI_ENDPOINT")
-    api_version = os.getenv("CM_AZURE_OPENAI_API_VERSION")
-    deployment = os.getenv("CM_AZURE_OPENAI_CHAT_DEPLOYMENT")
-    model = os.getenv("CM_AZURE_OPENAI_CHAT_MODEL")
-
-    missing = [
-        name
-        for name, value in [
-            ("CM_AZURE_OPENAI_API_KEY", api_key),
-            ("CM_AZURE_OPENAI_ENDPOINT", endpoint),
-            ("CM_AZURE_OPENAI_API_VERSION", api_version),
-            ("CM_AZURE_OPENAI_CHAT_DEPLOYMENT", deployment),
-        ]
-        if not value
-    ]
-    if missing:
-        raise RuntimeError(
-            "다음 Azure OpenAI 채팅 환경 변수를 설정하세요: " + ", ".join(missing)
-        )
-
-    return {
-        "api_key": api_key,
-        "endpoint": endpoint,
-        "api_version": api_version,
-        "deployment": deployment,
-        "model": model or deployment,
-    }
 
 
 class WorkspaceRAGSearchAgent:
@@ -140,7 +112,6 @@ class WorkspaceRAGSearchAgent:
                         "- 답변 마지막 줄에는 당신이 가장 관련성이 높다고 판단한 단일 문서의 URL을 그대로 적으세요. 다른 설명 없이 URL만 단독으로 작성합니다.\n"
                         "- URL을 선택할 때 컨텍스트에 제공된 유사도 점수가 가장 높은 정보를 우선 고려하세요.\n"
                         "- 관련 근거가 부족하면 솔직히 모른다고 답하세요.\n"
-                        "- 기본 응답 언어는 한국어입니다."
                     ),
                 ),
                 (
@@ -162,7 +133,7 @@ class WorkspaceRAGSearchAgent:
 
     def _ensure_chat_model(self) -> AzureChatOpenAI:
         if self._chat_model is None:
-            config = _load_chat_config()
+            config = _gpt5_load_chat_config()
             self._chat_model = AzureChatOpenAI(
                 azure_endpoint=config["endpoint"],
                 api_key=config["api_key"],
@@ -376,7 +347,7 @@ class WorkspaceRAGSearchAgent:
                 )
             return SearchResult(
                 question=query,
-                answer="연결된 워크스페이스에서 관련 문서를 찾을 수 없습니다.",
+                answer="관련 문서를 찾을 수 없습니다.",
                 citations=[],
             )
 
