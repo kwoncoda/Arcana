@@ -45,45 +45,155 @@ class TextBlock:
         }
 
 
-def _flatten_rich_text(items: Iterable[Dict[str, Any]]) -> List[str]:
-    texts: List[str] = []
+def _apply_rich_text_annotations(plain: str, *, annotations: Optional[Dict[str, Any]], href: Optional[str]) -> str:
+    """주어진 리치 텍스트 조각을 마크다운 문법으로 감싼다."""
+
+    if not plain:
+        return ""
+
+    # 코드 블록은 다른 꾸밈보다 우선 적용한다.
+    if annotations and annotations.get("code"):
+        content = f"`{plain}`"
+    else:
+        content = plain
+        if annotations:
+            if annotations.get("bold"):
+                content = f"**{content}**"
+            if annotations.get("italic"):
+                content = f"*{content}*"
+            if annotations.get("strikethrough"):
+                content = f"~~{content}~~"
+            if annotations.get("underline"):
+                # 마크다운에 기본 밑줄 문법이 없어 HTML 태그로 감싼다.
+                content = f"<u>{content}</u>"
+
+    if href:
+        return f"[{content}]({href})"
+    return content
+
+
+def _render_rich_text(items: Iterable[Dict[str, Any]]) -> tuple[str, str]:
+    """리치 텍스트 배열을 마크다운/평문 문자열로 동시에 반환한다."""
+
+    markdown_parts: List[str] = []
+    plain_parts: List[str] = []
+
     for item in items:
         plain = item.get("plain_text")
-        if plain:
-            stripped = plain.strip()
-            if stripped:
-                texts.append(stripped)
-    return texts
+        if not plain:
+            continue
+        markdown_parts.append(
+            _apply_rich_text_annotations(
+                plain,
+                annotations=item.get("annotations"),
+                href=item.get("href"),
+            )
+        )
+        plain_parts.append(plain)
+
+    return "".join(markdown_parts), "".join(plain_parts)
 
 
 def _extract_text_payload(block: Dict[str, Any]) -> List[str]:
     block_type = block.get("type", "")
     data = block.get(block_type) or {}
-    texts: List[str] = []
+
+    markdown_fragments: List[str] = []
+    plain_fragments: List[str] = []
 
     if isinstance(data, dict):
         if isinstance(data.get("rich_text"), list):
-            texts.extend(_flatten_rich_text(data["rich_text"]))
+            markdown, plain = _render_rich_text(data["rich_text"])
+            if markdown:
+                markdown_fragments.append(markdown)
+            if plain:
+                plain_fragments.append(plain)
         if isinstance(data.get("title"), list):
-            texts.extend(_flatten_rich_text(data["title"]))
+            markdown, plain = _render_rich_text(data["title"])
+            if markdown:
+                markdown_fragments.append(markdown)
+            if plain:
+                plain_fragments.append(plain)
         if isinstance(data.get("caption"), list):
-            texts.extend(_flatten_rich_text(data["caption"]))
-        if block_type == "equation":
-            expression = data.get("expression")
-            if isinstance(expression, str) and expression.strip():
-                texts.append(expression.strip())
-        if block_type == "to_do":
-            # Completed state also provides context.
-            checked = data.get("checked")
-            if isinstance(checked, bool):
-                texts.append("[x]" if checked else "[ ]")
+            markdown, plain = _render_rich_text(data["caption"])
+            if markdown:
+                markdown_fragments.append(markdown)
+            if plain:
+                plain_fragments.append(plain)
 
-    if block_type == "child_page":
-        title = data.get("title")
+    markdown_text_raw = "".join(markdown_fragments)
+    markdown_text = markdown_text_raw.strip()
+    plain_text_raw = "".join(plain_fragments)
+
+    lines: List[str] = []
+
+    if block_type == "heading_1":
+        if markdown_text:
+            lines.append(f"# {markdown_text}")
+    elif block_type == "heading_2":
+        if markdown_text:
+            lines.append(f"## {markdown_text}")
+    elif block_type == "heading_3":
+        if markdown_text:
+            lines.append(f"### {markdown_text}")
+    elif block_type == "bulleted_list_item":
+        if markdown_text:
+            lines.append(f"- {markdown_text}")
+    elif block_type == "numbered_list_item":
+        if markdown_text:
+            lines.append(f"1. {markdown_text}")
+    elif block_type == "to_do":
+        checked = False
+        if isinstance(data, dict):
+            checked = bool(data.get("checked"))
+        box = "x" if checked else " "
+        content = markdown_text
+        if content:
+            lines.append(f"- [{box}] {content}")
+        else:
+            lines.append(f"- [{box}]")
+    elif block_type == "quote":
+        if markdown_text:
+            lines.append(f"> {markdown_text}")
+    elif block_type == "callout":
+        emoji = ""
+        icon = data.get("icon") if isinstance(data, dict) else None
+        if isinstance(icon, dict):
+            emoji_value = icon.get("emoji")
+            if isinstance(emoji_value, str) and emoji_value.strip():
+                emoji = f"{emoji_value.strip()} "
+        if markdown_text or emoji:
+            lines.append(f"> {emoji}{markdown_text}".rstrip())
+    elif block_type == "code":
+        language = ""
+        if isinstance(data, dict):
+            language = str(data.get("language") or "").strip()
+        fence = f"```{language}" if language else "```"
+        lines.append(fence)
+        code_body = plain_text_raw.rstrip("\n")
+        if code_body:
+            lines.extend(code_body.splitlines())
+        lines.append("```")
+    elif block_type == "equation":
+        expression = ""
+        if isinstance(data, dict):
+            expression = str(data.get("expression") or "").strip()
+        if expression:
+            lines.append(f"$$ {expression} $$")
+    elif block_type == "divider":
+        lines.append("---")
+    elif block_type == "toggle":
+        if markdown_text:
+            lines.append(f"- {markdown_text}")
+    elif block_type == "child_page":
+        title = data.get("title") if isinstance(data, dict) else None
         if isinstance(title, str) and title.strip():
-            texts.append(title.strip())
+            lines.append(f"## {title.strip()}")
+    else:
+        if markdown_text:
+            lines.append(markdown_text)
 
-    return [t for t in texts if t]
+    return [line for line in lines if isinstance(line, str) and line]
 
 
 async def _collect_children(client: AsyncClient, block_id: str) -> List[Dict[str, Any]]:
