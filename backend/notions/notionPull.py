@@ -94,6 +94,28 @@ def _render_rich_text(items: Iterable[Dict[str, Any]]) -> tuple[str, str]:
     return "".join(markdown_parts), "".join(plain_parts)
 
 
+def _flatten_rich_text(items: Iterable[Dict[str, Any]]) -> List[str]:
+    """Notion rich_text 배열을 평문 문자열 리스트로 평탄화한다."""
+    out: List[str] = []
+    if not items:
+        return out
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        # 1순위: plain_text
+        pt = it.get("plain_text")
+        if isinstance(pt, str) and pt:
+            out.append(pt)
+            continue
+        # 2순위: text.content (일부 SDK/shape에서 plain_text가 비어 있을 수 있음)
+        txt = it.get("text")
+        if isinstance(txt, dict):
+            content = txt.get("content")
+            if isinstance(content, str) and content:
+                out.append(content)
+    return out
+
+
 def _extract_text_payload(block: Dict[str, Any]) -> List[str]:
     block_type = block.get("type", "")
     data = block.get(block_type) or {}
@@ -305,11 +327,12 @@ def _extract_page_title(page: Dict[str, Any]) -> str:
     # Root pages expose title within the `properties` payload.
     properties = page.get("properties")
     if isinstance(properties, dict):
-        title_prop = properties.get("title")
-        if isinstance(title_prop, dict):
-            title = _flatten_rich_text(title_prop.get("title", []))
-            if title:
-                return " ".join(title)
+        for prop in properties.values():
+            if isinstance(prop, dict) and prop.get("type") == "title":
+                title_items = prop.get("title", [])
+                title = _flatten_rich_text(title_items)
+                if title:
+                    return " ".join(title).strip()
 
     # As a fallback, check the top-level `title` key (databases use this shape).
     title_items = page.get("title")
