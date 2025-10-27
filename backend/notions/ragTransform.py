@@ -29,26 +29,44 @@ def _load_chunk_overlap_ratio() -> float:
 DEFAULT_CHUNK_OVERLAP_RATIO = _load_chunk_overlap_ratio()
 
 
+_INDENT_PARENT_TYPES = {
+    "bulleted_list_item",
+    "numbered_list_item",
+    "to_do",
+    "toggle",
+}
+
+
 def _clean_text_lines(lines: Iterable[str]) -> List[str]:
-    """Remove blank lines and non-string entries from the incoming iterable."""
+    """문자열이 아닌 항목과 완전히 비어 있는 줄을 제거한다."""
 
     cleaned: List[str] = []
     for line in lines:
         if not isinstance(line, str):
             continue
-        stripped = line.strip()
-        if stripped:
-            cleaned.append(stripped)
+        if not line.strip():
+            continue
+        cleaned.append(line.rstrip("\n"))
     return cleaned
 
 
-def _gather_block_text(block: Dict[str, Any]) -> List[str]:
-    """Recursively collect all text values from a Notion block tree."""
+def _gather_block_text(block: Dict[str, Any], *, depth: int = 0) -> List[str]:
+    """노션 블록 트리에서 텍스트 값을 재귀적으로 수집한다."""
 
-    text_lines = _clean_text_lines(block.get("text", []))
+    lines: List[str] = []
+    block_type = block.get("type", "")
+    indent = "  " * depth if depth else ""
+
+    for line in _clean_text_lines(block.get("text", [])):
+        if indent and not line.startswith("```"):
+            lines.append(f"{indent}{line}")
+        else:
+            lines.append(line)
+
+    child_depth = depth + 1 if block_type in _INDENT_PARENT_TYPES else depth
     for child in block.get("children", []):
-        text_lines.extend(_gather_block_text(child))
-    return text_lines
+        lines.extend(_gather_block_text(child, depth=child_depth))
+    return lines
 
 
 def _combine_page_text(blocks: Iterable[Dict[str, Any]]) -> List[str]:
