@@ -2,9 +2,20 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Dict, Iterable, List
 
 _LIST_TYPES = {"bulleted_list_item", "numbered_list_item", "to_do", "toggle"}
+
+
+@dataclass(frozen=True)
+class RenderedBlock:
+    """A single rendered Notion block with structural hints."""
+
+    type: str
+    depth: int
+    text: str
+    trailing_blank: bool
 
 
 def _sanitize_text_lines(lines: Iterable[str]) -> List[str]:
@@ -25,44 +36,55 @@ def _indent(depth: int) -> str:
     return "  " * max(depth, 0)
 
 
-def render_blocks_to_markdown(blocks: List[Dict], depth: int = 0) -> str:
-    """Render a Notion block tree (as dictionaries) into Markdown text."""
+def collect_rendered_blocks(blocks: List[Dict], depth: int = 0) -> List[RenderedBlock]:
+    """Flatten a Notion block tree into rendered block descriptors."""
 
-    lines: List[str] = []
-
+    rendered: List[RenderedBlock] = []
     for block in blocks or []:
-        block_type = block.get("type", "")
+        block_type = str(block.get("type") or "")
         text_lines = _sanitize_text_lines(block.get("text", []))
         children = block.get("children", []) or []
 
         prefix = _indent(depth) if block_type in _LIST_TYPES else ""
-
+        block_lines: List[str] = []
         for text in text_lines:
-            if block_type in _LIST_TYPES:
-                lines.append(f"{prefix}{text}")
-            else:
-                lines.append(text)
+            block_lines.append(f"{prefix}{text}" if block_type in _LIST_TYPES else text)
 
-        if children:
-            child_markdown = render_blocks_to_markdown(
-                children,
-                depth + (1 if block_type in _LIST_TYPES else 0),
+        block_text = "\n".join(block_lines).strip("\n")
+        trailing_blank = block_type not in _LIST_TYPES and block_type != "divider"
+
+        if block_type and (block_text or not children):
+            rendered.append(
+                RenderedBlock(
+                    type=block_type,
+                    depth=depth,
+                    text=block_text,
+                    trailing_blank=trailing_blank,
+                )
             )
-            if child_markdown:
-                lines.append(child_markdown)
 
-        if block_type not in _LIST_TYPES and block_type != "divider":
-            lines.append("")
+        child_depth = depth + (1 if block_type in _LIST_TYPES else 0)
+        if children:
+            rendered.extend(collect_rendered_blocks(children, depth=child_depth))
 
-    output: List[str] = []
+    return rendered
+
+
+def render_blocks_to_markdown(blocks: List[Dict], depth: int = 0) -> str:
+    """Render a Notion block tree (as dictionaries) into Markdown text."""
+
+    rendered_blocks = collect_rendered_blocks(blocks, depth)
+    lines: List[str] = []
     previous_blank = False
-    for line in lines:
-        if not line.strip():
-            if not previous_blank:
-                output.append("")
-                previous_blank = True
-        else:
-            output.append(line)
-            previous_blank = False
 
-    return "\n".join(output).strip()
+    for block in rendered_blocks:
+        if not block.text:
+            continue
+        lines.append(block.text)
+        previous_blank = False
+
+        if block.trailing_blank and not previous_blank:
+            lines.append("")
+            previous_blank = True
+
+    return "\n".join(lines).strip()
