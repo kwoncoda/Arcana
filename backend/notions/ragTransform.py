@@ -56,6 +56,8 @@ def _update_fence_state(text: str, fence_open: bool) -> bool:
             fence_open = not fence_open
     return fence_open
 
+def _update_fence_state(text: str, fence_open: bool) -> bool:
+    """Track fenced code block boundaries while scanning text."""
 
 def _compute_fence_state(paragraphs: Iterable[str]) -> bool:
     """Recompute code fence state for a list of paragraphs."""
@@ -64,6 +66,9 @@ def _compute_fence_state(paragraphs: Iterable[str]) -> bool:
     for paragraph in paragraphs:
         fence_open = _update_fence_state(paragraph, fence_open)
     return fence_open
+
+    sections = split_markdown_sections(markdown)
+    chunks: List[str] = []
 
 
 def _collect_block_metadata(
@@ -232,6 +237,7 @@ def build_jsonl_records_from_pages(
                     "text": chunk,
                     "format": "markdown",
                     "block_metadata": block_metadata,
+
                 }
             )
 
