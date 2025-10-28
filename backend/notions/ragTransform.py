@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import re
-import json
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence
@@ -107,6 +106,7 @@ class AnnotatedSegment:
     depth: int
     marker: str
     body: str
+    plain_body: str
     separator: str
     token_length: int
 
@@ -122,6 +122,7 @@ def _build_annotated_segments(blocks: Sequence[RenderedBlock]) -> List[Annotated
             continue
 
         marker = _marker_for_type(block.type)
+        plain_body = block.text
         if "\n" in block.text:
             body = f"[[{marker}]]\n{block.text}\n[[/{marker}]]"
         else:
@@ -141,6 +142,7 @@ def _build_annotated_segments(blocks: Sequence[RenderedBlock]) -> List[Annotated
                 depth=block.depth,
                 marker=marker,
                 body=body,
+                plain_body=plain_body,
                 separator=separator,
                 token_length=token_length,
             )
@@ -202,30 +204,29 @@ def _build_chunk_payload(
     """Assemble text and structural metadata for a chunk."""
 
     if not segments:
-        return {"text": "", "block_types": [], "block_starts": []}
+        return {
+            "text": "",
+            "plain_text": "",
+        }
 
     parts: List[str] = []
-    block_types: List[str] = []
-    block_starts: List[int] = []
-    offset = 0
+    plain_parts: List[str] = []
 
     for segment in segments:
-        block_types.append(f"{segment.marker}:{segment.type}:{segment.depth}")
-        block_starts.append(offset)
-
         parts.append(segment.body)
-        offset += len(segment.body)
+        if segment.plain_body:
+            plain_parts.append(segment.plain_body)
 
         if segment.separator:
             parts.append(segment.separator)
-            offset += len(segment.separator)
+            plain_parts.append(segment.separator)
 
     text = "".join(parts).rstrip()
+    plain_text = "".join(plain_parts).rstrip()
 
     return {
         "text": text,
-        "block_types": block_types,
-        "block_starts": block_starts,
+        "plain_text": plain_text,
     }
 
 
@@ -275,9 +276,8 @@ def build_jsonl_records_from_pages(
                     "last_edited_time": last_edited_time,
                     "page_url": page_url,
                     "text": "",
+                    "plain_text": "",
                     "format": "markdown",
-                    "block_types": [],
-                    "block_starts": [],
                 }
             )
             continue
@@ -297,9 +297,8 @@ def build_jsonl_records_from_pages(
                     "last_edited_time": last_edited_time,
                     "page_url": page_url,
                     "text": payload["text"],
+                    "plain_text": payload["plain_text"],
                     "format": "markdown",
-                    "block_types": payload["block_types"],
-                    "block_starts": payload["block_starts"],
                 }
             )
 
@@ -314,8 +313,9 @@ def build_documents_from_records(
 
     documents: List[Document] = []
     for index, record in enumerate(records):
-        text = record.get("text", "")
-        if not text:
+        plain_text = record.get("plain_text") or ""
+        formatted_text = record.get("text") or plain_text
+        if not plain_text.strip():
             continue
 
         metadata = deepcopy(workspace_metadata)
@@ -328,11 +328,11 @@ def build_documents_from_records(
                 "chunk_id": f"{record.get('page_id')}:{index}",
                 "chunk_index": index,
                 "format": record.get("format", "markdown"),
-                "block_types": json.dumps(record.get("block_types") or []),
-                "block_starts": json.dumps(record.get("block_starts") or []),
+                "formatted_text": formatted_text,
+                "plain_text": plain_text,
             }
         )
-        document = Document(page_content=text, metadata=metadata)
+        document = Document(page_content=plain_text, metadata=metadata)
         documents.append(document)
     return documents
 
