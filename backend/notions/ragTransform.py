@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import os
+import re
 from copy import deepcopy
 from typing import Any, Dict, Iterable, List, Optional
 
+import tiktoken
 from langchain_core.documents import Document
 
+from .renderer import render_blocks_to_markdown
 
-DEFAULT_CHUNK_SIZE = 1200
+DEFAULT_CHUNK_SIZE = 800
 _DEFAULT_CHUNK_OVERLAP_RATIO = 0.1
 
 
@@ -29,64 +32,139 @@ def _load_chunk_overlap_ratio() -> float:
 DEFAULT_CHUNK_OVERLAP_RATIO = _load_chunk_overlap_ratio()
 
 
-_INDENT_PARENT_TYPES = {
-    "bulleted_list_item",
-    "numbered_list_item",
-    "to_do",
-    "toggle",
-}
+def _get_token_encoder() -> tiktoken.Encoding:
+    """Return a cached token encoder for counting tokens."""
+
+    return tiktoken.get_encoding("cl100k_base")
 
 
-def _clean_text_lines(lines: Iterable[str]) -> List[str]:
-    """문자열이 아닌 항목과 완전히 비어 있는 줄을 제거한다."""
+_ENC = _get_token_encoder()
 
-    cleaned: List[str] = []
-    for line in lines:
-        if not isinstance(line, str):
+def count_tokens(text: str) -> int:
+    """Return the number of tokens for the given string."""
+
+    if not text:
+        return 0
+    return len(_ENC.encode(text))
+
+
+def _update_fence_state(text: str, fence_open: bool) -> bool:
+    """Track fenced code block boundaries while scanning text."""
+
+    for line in text.splitlines():
+        if line.strip().startswith("```"):
+            fence_open = not fence_open
+    return fence_open
+
+
+def _compute_fence_state(paragraphs: Iterable[str]) -> bool:
+    """Recompute code fence state for a list of paragraphs."""
+
+    fence_open = False
+    for paragraph in paragraphs:
+        fence_open = _update_fence_state(paragraph, fence_open)
+    return fence_open
+
+
+def _collect_block_metadata(
+    blocks: Iterable[Dict[str, Any]],
+    *,
+    depth: int = 0,
+) -> List[Dict[str, Any]]:
+    """Flatten block descriptors (id/type/depth) for downstream metadata."""
+
+    metadata: List[Dict[str, Any]] = []
+    for block in blocks or []:
+        block_id = str(block.get("id") or "")
+        block_type = str(block.get("type") or "")
+        metadata.append(
+            {
+                "id": block_id,
+                "type": block_type,
+                "depth": depth,
+            }
+        )
+        children = block.get("children") or []
+        if children:
+            metadata.extend(
+                _collect_block_metadata(children, depth=depth + 1)
+            )
+    return metadata
+
+
+def iter_markdown_chunks(
+    markdown: str,
+    *,
+    max_tokens: int = DEFAULT_CHUNK_SIZE,
+    overlap: int = 80,
+) -> Iterable[str]:
+    """Yield markdown chunks that keep pages intact unless oversized."""
+
+    if not markdown:
+        return
+
+    normalized = markdown.strip()
+    if not normalized:
+        return
+
+    total_tokens = count_tokens(normalized)
+    if max_tokens <= 0 or total_tokens <= max_tokens:
+        yield normalized
+        return
+
+    paragraphs = [
+        part.strip("\n")
+        for part in re.split(r"\n\s*\n", normalized)
+        if part.strip()
+    ]
+    if not paragraphs:
+        yield normalized
+        return
+
+    current: List[str] = []
+    current_tokens = 0
+    fence_open = False
+    index = 0
+
+    while index < len(paragraphs):
+        paragraph = paragraphs[index]
+        paragraph_tokens = count_tokens(paragraph)
+
+        if (
+            current
+            and not fence_open
+            and current_tokens + paragraph_tokens > max_tokens
+        ):
+            chunk = "\n\n".join(current).strip()
+            if chunk:
+                yield chunk
+            if overlap > 0:
+                retained: List[str] = []
+                retained_tokens = 0
+                for previous in reversed(current):
+                    tokens = count_tokens(previous)
+                    if retained_tokens + tokens > overlap:
+                        break
+                    retained.append(previous)
+                    retained_tokens += tokens
+                retained.reverse()
+                current = retained
+                current_tokens = sum(count_tokens(item) for item in current)
+            else:
+                current = []
+                current_tokens = 0
+            fence_open = _compute_fence_state(current)
             continue
-        if not line.strip():
-            continue
-        cleaned.append(line.rstrip("\n"))
-    return cleaned
 
+        current.append(paragraph)
+        current_tokens += paragraph_tokens
+        fence_open = _update_fence_state(paragraph, fence_open)
+        index += 1
 
-def _gather_block_text(block: Dict[str, Any], *, depth: int = 0) -> List[str]:
-    """노션 블록 트리에서 텍스트 값을 재귀적으로 수집한다."""
-
-    lines: List[str] = []
-    block_type = block.get("type", "")
-    indent = "  " * depth if depth else ""
-
-    for line in _clean_text_lines(block.get("text", [])):
-        if indent and not line.startswith("```"):
-            lines.append(f"{indent}{line}")
-        else:
-            lines.append(line)
-
-    child_depth = depth + 1 if block_type in _INDENT_PARENT_TYPES else depth
-    for child in block.get("children", []):
-        lines.extend(_gather_block_text(child, depth=child_depth))
-    return lines
-
-
-def _combine_page_text(blocks: Iterable[Dict[str, Any]]) -> List[str]:
-    """Flatten the text from all blocks that belong to a page."""
-
-    combined: List[str] = []
-    for block in blocks:
-        combined.extend(_gather_block_text(block))
-    return combined
-
-
-def _resolve_page_url(page: Dict[str, Any]) -> str:
-    """Return the canonical URL for a Notion page."""
-
-    explicit_url = page.get("url")
-    if isinstance(explicit_url, str) and explicit_url.strip():
-        return explicit_url.strip()
-
-    page_id = str(page.get("page_id", "")).replace("-", "")
-    return f"https://www.notion.so/{page_id}"
+    if current:
+        chunk = "\n\n".join(current).strip()
+        if chunk:
+            yield chunk
 
 
 def _calculate_chunk_overlap(
@@ -106,78 +184,62 @@ def _calculate_chunk_overlap(
     return max(0, estimated)
 
 
-def _chunk_text(text: str, *, chunk_size: int, chunk_overlap: int) -> List[str]:
-    """Split text into chunks using the provided size and overlap."""
-
-    if chunk_size <= 0:
-        return [text] if text else []
-
-    if chunk_overlap >= chunk_size:
-        chunk_overlap = max(0, chunk_size - 1)
-
-    chunks: List[str] = []
-    start = 0
-    text_length = len(text)
-
-    while start < text_length:
-        end = min(start + chunk_size, text_length)
-        chunk = text[start:end].strip()
-        if chunk:
-            chunks.append(chunk)
-        if end == text_length:
-            break
-        start = max(end - chunk_overlap, start + 1)
-    return chunks
-
-
 def build_jsonl_records_from_pages(
     pages: List[Dict[str, Any]],
     *,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     chunk_overlap: Optional[int] = None,
-) -> List[Dict[str, str]]:
+) -> List[Dict[str, Any]]:
     """Convert Notion page payloads into JSONL ready records."""
 
-    records: List[Dict[str, str]] = []
-    effective_chunk_overlap = _calculate_chunk_overlap(chunk_size, chunk_overlap)
+    records: List[Dict[str, Any]] = []
+    effective_overlap = _calculate_chunk_overlap(chunk_size, chunk_overlap)
 
     for page in pages:
         page_id = str(page.get("page_id"))
         title = str(page.get("title") or "")
         last_edited_time = str(page.get("last_edited_time") or "")
-        page_url = _resolve_page_url(page)
+        page_url = str(page.get("url") or "")
+        blocks = page.get("blocks", []) or []
+        block_metadata = _collect_block_metadata(blocks)
 
-        text_lines = _combine_page_text(page.get("blocks", []))
-        if not text_lines:
-            record = {
-                "page_id": page_id,
-                "title": title,
-                "last_edited_time": last_edited_time,
-                "text": "",
-                "page_url": page_url,
-            }
-            records.append(record)
+        markdown = render_blocks_to_markdown(blocks)
+        if not markdown:
+            records.append(
+                {
+                    "page_id": page_id,
+                    "title": title,
+                    "last_edited_time": last_edited_time,
+                    "page_url": page_url,
+                    "text": "",
+                    "format": "markdown",
+                    "block_metadata": block_metadata,
+                }
+            )
             continue
 
-        full_text = "\n".join(text_lines)
-        for chunk in _chunk_text(
-            full_text,
-            chunk_size=chunk_size,
-            chunk_overlap=effective_chunk_overlap,
+        for chunk in iter_markdown_chunks(
+            markdown,
+            max_tokens=chunk_size,
+            overlap=effective_overlap,
         ):
-            record = {
-                "page_id": page_id,
-                "title": title,
-                "last_edited_time": last_edited_time,
-                "text": chunk,
-                "page_url": page_url,
-            }
-            records.append(record)
+            records.append(
+                {
+                    "page_id": page_id,
+                    "title": title,
+                    "last_edited_time": last_edited_time,
+                    "page_url": page_url,
+                    "text": chunk,
+                    "format": "markdown",
+                    "block_metadata": block_metadata,
+                }
+            )
+
     return records
 
 
 def build_documents_from_records(
-    records: List[Dict[str, str]],
+    records: List[Dict[str, Any]],
     workspace_metadata: Dict[str, Any],
 ) -> List[Document]:
     """Create LangChain documents from JSONL records."""
@@ -197,6 +259,8 @@ def build_documents_from_records(
                 "last_edited_time": record.get("last_edited_time"),
                 "chunk_id": f"{record.get('page_id')}:{index}",
                 "chunk_index": index,
+                "format": record.get("format", "markdown"),
+                "block_metadata": record.get("block_metadata", []),
             }
         )
         document = Document(page_content=text, metadata=metadata)
