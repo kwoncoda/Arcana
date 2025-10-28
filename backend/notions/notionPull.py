@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Dict, Iterable, List, Optional
 
 from notion_client import AsyncClient
@@ -25,6 +26,23 @@ _SKIP_BLOCK_TYPES: set[str] = {
     "video",
     "unsupported",
 }
+
+
+def _parse_notion_timestamp(value: Optional[str]) -> Optional[datetime]:
+    """Notion에서 내려오는 ISO8601 타임스탬프를 UTC 기준 ``datetime``으로 변환한다."""
+
+    if not value:
+        return None
+
+    try:
+        normalized = value.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 @dataclass(slots=True)
@@ -348,15 +366,36 @@ def _extract_page_title(page: Dict[str, Any]) -> str:
 async def pull_all_shared_page_text(
     db: Session,
     cred: NotionOauthCredentials,
+    *,
+    updated_after: Optional[datetime] = None,
 ) -> Dict[str, Any]:
-    """Return textual content for every page shared with the integration."""
+    """Return textual content for pages updated after ``updated_after``.
+
+    전체 페이지를 매번 재수집하는 대신, 마지막 갱신 시각 이후에 수정된 페이지만
+    필터링하여 반환한다. ``updated_after``가 ``None``이면 모든 페이지를 반환한다.
+    """
 
     refreshed = await ensure_valid_access_token(db, cred)
 
+    comparison_point: Optional[datetime] = None
+    if updated_after:
+        if updated_after.tzinfo is None:
+            comparison_point = updated_after.replace(tzinfo=timezone.utc)
+        else:
+            comparison_point = updated_after.astimezone(timezone.utc)
+
     async with AsyncClient(auth=refreshed.access_token, notion_version=_NOTION_VERSION) as client:
         pages: List[Dict[str, Any]] = []
+        total_pages = 0
+        skipped_pages = 0
 
         async for page in _iter_shared_pages(client):
+            total_pages += 1
+            notion_timestamp = _parse_notion_timestamp(page.get("last_edited_time"))
+            if comparison_point and notion_timestamp and notion_timestamp <= comparison_point:
+                skipped_pages += 1
+                continue
+
             page_id = str(page.get("id"))
             blocks = await _fetch_page_blocks(client, page_id)
             pages.append(
@@ -372,5 +411,8 @@ async def pull_all_shared_page_text(
     return {
         "pages": pages,
         "count": len(pages),
+        "total_pages": total_pages,
+        "skipped_pages": skipped_pages,
+        "updated_after": comparison_point.isoformat() if comparison_point else None,
     }
 

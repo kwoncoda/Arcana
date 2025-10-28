@@ -188,8 +188,20 @@ async def pull_all_pages(
     workspace = _resolve_workspace(db, user)
     credential = _get_connected_credential(db, user=user, workspace=workspace)
 
+    rag_index = db.scalar(
+        select(RagIndex).where(
+            RagIndex.workspace_idx == workspace.idx,
+            RagIndex.name == DEFAULT_RAG_INDEX_NAME,
+        )
+    )
+    last_synced_at = rag_index.updated if rag_index else None
+
     try:
-        payload = await pull_all_shared_page_text(db, credential)
+        payload = await pull_all_shared_page_text(
+            db,
+            credential,
+            updated_after=last_synced_at,
+        )
     except APIResponseError as exc:
         status_code = exc.status or status.HTTP_502_BAD_GATEWAY
         detail = getattr(exc, "message", str(exc))
@@ -216,21 +228,26 @@ async def pull_all_pages(
     if logger.isEnabledFor(logging.DEBUG):  # 디버그 레벨에서만 전처리 결과를 기록하도록 조건을 설정하는 주석
         logger.debug("Processed Notion JSONL payload: %s", jsonl_text)  # 최종 JSONL 텍스트를 디버그 로그로 출력하는 주석
 
+    storage_path = ensure_workspace_storage(workspace.name)
+    storage_uri = str(storage_path)
+    if rag_index and rag_index.storage_uri:
+        storage_uri = rag_index.storage_uri
+
     try:
-        ingested_count = rag_service.upsert_documents(workspace.idx, workspace.name, documents)  # 변환된 문서를 Chroma에 적재하고 개수 반환 주석
+        if documents:
+            ingested_count = rag_service.replace_documents(
+                workspace.idx,
+                workspace.name,
+                documents,
+                storage_uri=storage_uri,
+            )  # 변환된 문서를 Chroma에 적재하고 개수 반환 주석
+        else:
+            ingested_count = 0
     except RuntimeError as exc:  # Azure OpenAI 구성 누락 등 구성 오류 처리 주석
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,  # 내부 서버 오류 응답 코드 지정 주석
             detail=f"RAG 적재 실패: {exc}",  # 실패 사유를 상세 메시지로 전달 주석
         ) from exc
-
-    storage_path = ensure_workspace_storage(workspace.name)
-    rag_index = db.scalar(
-        select(RagIndex).where(
-            RagIndex.workspace_idx == workspace.idx,
-            RagIndex.name == DEFAULT_RAG_INDEX_NAME,
-        )
-    )
 
     if not rag_index:
         rag_index = RagIndex(
@@ -242,11 +259,16 @@ async def pull_all_pages(
         )
         db.add(rag_index)
     else:
-        rag_index.storage_uri = str(storage_path)
+        rag_index.storage_uri = storage_uri
         rag_index.index_type = "chroma"
 
-    rag_index.object_count = int(payload.get("count") or 0)
-    rag_index.vector_count = int(ingested_count)
+    stats = rag_service.collection_stats(
+        workspace.idx,
+        workspace.name,
+        storage_uri=rag_index.storage_uri,
+    )
+    rag_index.object_count = stats.page_count
+    rag_index.vector_count = stats.vector_count
     rag_index.status = "ready"
 
     try:
@@ -263,4 +285,5 @@ async def pull_all_pages(
         "jsonl_records": jsonl_records,  # 전처리된 JSONL 레코드 리스트를 포함하는 주석
         "jsonl_text": jsonl_text,  # 직렬화된 JSONL 문자열을 포함하는 주석
         "ingested_chunks": ingested_count,  # Chroma에 적재된 청크 수를 포함하는 주석
+        "last_synced_at": last_synced_at.isoformat() if last_synced_at else None,  # 직전 동기화 기준 시각 주석
     }
