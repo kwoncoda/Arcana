@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import json
 from copy import deepcopy
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -69,7 +70,6 @@ def _compute_fence_state(paragraphs: Iterable[str]) -> bool:
 
     sections = split_markdown_sections(markdown)
     chunks: List[str] = []
-
 
 def _collect_block_metadata(
     blocks: Iterable[Dict[str, Any]],
@@ -207,6 +207,13 @@ def build_jsonl_records_from_pages(
         page_url = str(page.get("url") or "")
         blocks = page.get("blocks", []) or []
         block_metadata = _collect_block_metadata(blocks)
+        serialized_block_metadata = json.dumps(
+            block_metadata,
+            ensure_ascii=False,
+        )
+        block_types = ",".join(
+            descriptor.get("type", "") for descriptor in block_metadata if descriptor.get("type")
+        )
 
         markdown = render_blocks_to_markdown(blocks)
         if not markdown:
@@ -218,7 +225,8 @@ def build_jsonl_records_from_pages(
                     "page_url": page_url,
                     "text": "",
                     "format": "markdown",
-                    "block_metadata": block_metadata,
+                    "block_metadata": serialized_block_metadata,
+                    "block_types": block_types,
                 }
             )
             continue
@@ -236,8 +244,8 @@ def build_jsonl_records_from_pages(
                     "page_url": page_url,
                     "text": chunk,
                     "format": "markdown",
-                    "block_metadata": block_metadata,
-
+                    "block_metadata": serialized_block_metadata,
+                    "block_types": block_types,
                 }
             )
 
@@ -266,7 +274,8 @@ def build_documents_from_records(
                 "chunk_id": f"{record.get('page_id')}:{index}",
                 "chunk_index": index,
                 "format": record.get("format", "markdown"),
-                "block_metadata": record.get("block_metadata", []),
+                "block_metadata": record.get("block_metadata") or "[]",
+                "block_types": record.get("block_types") or "",
             }
         )
         document = Document(page_content=text, metadata=metadata)
