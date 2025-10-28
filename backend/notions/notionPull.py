@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
 from typing import Any, AsyncIterator, Dict, Iterable, List, Optional
 
 from notion_client import AsyncClient
@@ -26,6 +26,23 @@ _SKIP_BLOCK_TYPES: set[str] = {
     "video",
     "unsupported",
 }
+
+
+def _local_timezone() -> tzinfo:
+    """Return the host machine's local timezone or UTC as a fallback."""
+
+    tz = datetime.now(timezone.utc).astimezone().tzinfo
+    return tz or timezone.utc
+
+
+def _normalize_to_utc(value: datetime) -> datetime:
+    """Convert ``value`` to a timezone-aware UTC datetime."""
+
+    if value.tzinfo is None:
+        localized = value.replace(tzinfo=_local_timezone())
+    else:
+        localized = value
+    return localized.astimezone(timezone.utc)
 
 
 def _parse_notion_timestamp(value: Optional[str]) -> Optional[datetime]:
@@ -379,10 +396,7 @@ async def pull_all_shared_page_text(
 
     comparison_point: Optional[datetime] = None
     if updated_after:
-        if updated_after.tzinfo is None:
-            comparison_point = updated_after.replace(tzinfo=timezone.utc)
-        else:
-            comparison_point = updated_after.astimezone(timezone.utc)
+        comparison_point = _normalize_to_utc(updated_after)
 
     async with AsyncClient(auth=refreshed.access_token, notion_version=_NOTION_VERSION) as client:
         pages: List[Dict[str, Any]] = []
