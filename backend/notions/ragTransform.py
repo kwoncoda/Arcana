@@ -40,34 +40,12 @@ def _get_token_encoder() -> tiktoken.Encoding:
 
 _ENC = _get_token_encoder()
 
-_SECTION_SPLIT_RE = re.compile(r"^(#{1,6}\s)|^(---)$", re.MULTILINE)
-
-
 def count_tokens(text: str) -> int:
     """Return the number of tokens for the given string."""
 
     if not text:
         return 0
     return len(_ENC.encode(text))
-
-
-def split_markdown_sections(markdown: str) -> List[str]:
-    """Split markdown text into sections around headings and dividers."""
-
-    if not markdown:
-        return []
-
-    parts: List[str] = []
-    last_index = 0
-    for match in _SECTION_SPLIT_RE.finditer(markdown):
-        start = match.start()
-        if start > last_index:
-            parts.append(markdown[last_index:start].strip())
-        last_index = start
-    if last_index < len(markdown):
-        parts.append(markdown[last_index:].strip())
-
-    return [section for section in parts if section]
 
 
 def _update_fence_state(text: str, fence_open: bool) -> bool:
@@ -78,6 +56,8 @@ def _update_fence_state(text: str, fence_open: bool) -> bool:
             fence_open = not fence_open
     return fence_open
 
+def _update_fence_state(text: str, fence_open: bool) -> bool:
+    """Track fenced code block boundaries while scanning text."""
 
 def _compute_fence_state(paragraphs: Iterable[str]) -> bool:
     """Recompute code fence state for a list of paragraphs."""
@@ -87,6 +67,35 @@ def _compute_fence_state(paragraphs: Iterable[str]) -> bool:
         fence_open = _update_fence_state(paragraph, fence_open)
     return fence_open
 
+    sections = split_markdown_sections(markdown)
+    chunks: List[str] = []
+
+
+def _collect_block_metadata(
+    blocks: Iterable[Dict[str, Any]],
+    *,
+    depth: int = 0,
+) -> List[Dict[str, Any]]:
+    """Flatten block descriptors (id/type/depth) for downstream metadata."""
+
+    metadata: List[Dict[str, Any]] = []
+    for block in blocks or []:
+        block_id = str(block.get("id") or "")
+        block_type = str(block.get("type") or "")
+        metadata.append(
+            {
+                "id": block_id,
+                "type": block_type,
+                "depth": depth,
+            }
+        )
+        children = block.get("children") or []
+        if children:
+            metadata.extend(
+                _collect_block_metadata(children, depth=depth + 1)
+            )
+    return metadata
+
 
 def iter_markdown_chunks(
     markdown: str,
@@ -94,69 +103,73 @@ def iter_markdown_chunks(
     max_tokens: int = DEFAULT_CHUNK_SIZE,
     overlap: int = 80,
 ) -> Iterable[str]:
-    """Yield markdown-friendly chunks respecting section boundaries."""
+    """Yield markdown chunks that keep pages intact unless oversized."""
 
     if not markdown:
-        return []
+        return
 
-    sections = split_markdown_sections(markdown)
-    chunks: List[str] = []
+    normalized = markdown.strip()
+    if not normalized:
+        return
 
-    for section in sections:
-        paragraphs = [
-            part.strip("\n")
-            for part in re.split(r"\n\s*\n", section.strip())
-            if part.strip()
-        ]
-        if not paragraphs:
-            continue
+    total_tokens = count_tokens(normalized)
+    if max_tokens <= 0 or total_tokens <= max_tokens:
+        yield normalized
+        return
 
-        current: List[str] = []
-        current_tokens = 0
-        fence_open = False
-        index = 0
+    paragraphs = [
+        part.strip("\n")
+        for part in re.split(r"\n\s*\n", normalized)
+        if part.strip()
+    ]
+    if not paragraphs:
+        yield normalized
+        return
 
-        while index < len(paragraphs):
-            paragraph = paragraphs[index]
-            paragraph_tokens = count_tokens(paragraph)
+    current: List[str] = []
+    current_tokens = 0
+    fence_open = False
+    index = 0
 
-            if (
-                current
-                and not fence_open
-                and current_tokens + paragraph_tokens > max_tokens
-            ):
-                chunk = "\n\n".join(current).strip()
-                if chunk:
-                    chunks.append(chunk)
-                if overlap > 0:
-                    retained: List[str] = []
-                    retained_tokens = 0
-                    for previous in reversed(current):
-                        tokens = count_tokens(previous)
-                        if retained_tokens + tokens > overlap:
-                            break
-                        retained.append(previous)
-                        retained_tokens += tokens
-                    retained.reverse()
-                    current = retained
-                    current_tokens = sum(count_tokens(item) for item in current)
-                else:
-                    current = []
-                    current_tokens = 0
-                fence_open = _compute_fence_state(current)
-                continue
+    while index < len(paragraphs):
+        paragraph = paragraphs[index]
+        paragraph_tokens = count_tokens(paragraph)
 
-            current.append(paragraph)
-            current_tokens += paragraph_tokens
-            fence_open = _update_fence_state(paragraph, fence_open)
-            index += 1
-
-        if current:
+        if (
+            current
+            and not fence_open
+            and current_tokens + paragraph_tokens > max_tokens
+        ):
             chunk = "\n\n".join(current).strip()
             if chunk:
-                chunks.append(chunk)
+                yield chunk
+            if overlap > 0:
+                retained: List[str] = []
+                retained_tokens = 0
+                for previous in reversed(current):
+                    tokens = count_tokens(previous)
+                    if retained_tokens + tokens > overlap:
+                        break
+                    retained.append(previous)
+                    retained_tokens += tokens
+                retained.reverse()
+                current = retained
+                current_tokens = sum(count_tokens(item) for item in current)
+            else:
+                current = []
+                current_tokens = 0
+            fence_open = _compute_fence_state(current)
+            continue
 
-    return chunks
+        current.append(paragraph)
+        current_tokens += paragraph_tokens
+        fence_open = _update_fence_state(paragraph, fence_open)
+        index += 1
+
+    if current:
+        chunk = "\n\n".join(current).strip()
+        if chunk:
+            yield chunk
 
 
 def _calculate_chunk_overlap(
@@ -192,8 +205,10 @@ def build_jsonl_records_from_pages(
         title = str(page.get("title") or "")
         last_edited_time = str(page.get("last_edited_time") or "")
         page_url = str(page.get("url") or "")
+        blocks = page.get("blocks", []) or []
+        block_metadata = _collect_block_metadata(blocks)
 
-        markdown = render_blocks_to_markdown(page.get("blocks", []))
+        markdown = render_blocks_to_markdown(blocks)
         if not markdown:
             records.append(
                 {
@@ -203,6 +218,7 @@ def build_jsonl_records_from_pages(
                     "page_url": page_url,
                     "text": "",
                     "format": "markdown",
+                    "block_metadata": block_metadata,
                 }
             )
             continue
@@ -220,6 +236,8 @@ def build_jsonl_records_from_pages(
                     "page_url": page_url,
                     "text": chunk,
                     "format": "markdown",
+                    "block_metadata": block_metadata,
+
                 }
             )
 
@@ -248,6 +266,7 @@ def build_documents_from_records(
                 "chunk_id": f"{record.get('page_id')}:{index}",
                 "chunk_index": index,
                 "format": record.get("format", "markdown"),
+                "block_metadata": record.get("block_metadata", []),
             }
         )
         document = Document(page_content=text, metadata=metadata)
