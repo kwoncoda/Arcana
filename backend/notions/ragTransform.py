@@ -83,7 +83,7 @@ _BLOCK_TYPE_MARKERS: Dict[str, str] = {
     "breadcrumb": "BREADCRUMB",
 }
 
-    return tiktoken.get_encoding("cl100k_base")
+
 
 def _marker_for_type(block_type: str) -> str:
     """Map a Notion block type to a stable marker token."""
