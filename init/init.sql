@@ -58,18 +58,45 @@ CREATE TABLE workspaces (
 CREATE TABLE rag_indexes (
   idx            BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT 'RAG 인덱스 메타 PK',
   workspace_idx  BIGINT NOT NULL                   COMMENT '귀속 워크스페이스 FK',
-  name           VARCHAR(200) NOT NULL DEFAULT 'default'     COMMENT '인덱스 이름(예: default)',
-  index_type     ENUM('faiss','qdrant','weaviate','pgvector', 'chroma') NOT NULL COMMENT '인덱스 엔진 종류',
-  storage_uri    VARCHAR(1000) NOT NULL                COMMENT 'db 저장 경로',
-  dim            INT                               COMMENT '임베딩 차원 수',
-  status         ENUM('ready','building','failed') NOT NULL DEFAULT 'ready' COMMENT '인덱스 상태',
-  object_count   INT NOT NULL DEFAULT 0            COMMENT '색인된 외부 오브젝트 수(예: 노션 페이지 수)',
-  vector_count   INT NOT NULL DEFAULT 0            COMMENT '저장된 벡터 엔트리 수',
-  updated        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '마지막 갱신 시각',
+  name           VARCHAR(200) NOT NULL DEFAULT 'default' COMMENT '인덱스 이름',
+  index_type     ENUM('faiss','qdrant','weaviate','pgvector','chroma') NOT NULL COMMENT '엔진',
+  storage_uri    VARCHAR(1000) NOT NULL           COMMENT 'db 저장 경로',
+  dim            INT                               COMMENT '임베딩 차원',
+  status         ENUM('ready','building','failed') NOT NULL DEFAULT 'ready' COMMENT '상태',
+  object_count   INT NOT NULL DEFAULT 0            COMMENT '외부 오브젝트 수',
+  vector_count   INT NOT NULL DEFAULT 0            COMMENT '벡터 엔트리 수',
+  updated        DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00' COMMENT '마지막 갱신 시각',
   UNIQUE KEY uk_ws_name (workspace_idx, name),
   KEY idx_ws (workspace_idx),
   CONSTRAINT fk_rag_ws FOREIGN KEY (workspace_idx) REFERENCES workspaces(idx)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='워크스페이스별 RAG 인덱스 메타';
+
+-- INSERT 시에는 무조건 1970-01-01로 고정 (ORM이 값을 넣어도 강제)
+DROP TRIGGER IF EXISTS rag_indexes_force_1970_on_insert;
+DELIMITER $$
+CREATE TRIGGER rag_indexes_force_1970_on_insert
+BEFORE INSERT ON rag_indexes
+FOR EACH ROW
+BEGIN
+  SET NEW.updated = '1970-01-01 00:00:00';
+END$$
+DELIMITER ;
+
+-- UPDATE 시, '인덱싱 관련' 변화가 있을 때만 updated를 현재시각으로 갱신
+-- (원하면 조건을 더/덜 넣으세요)
+DROP TRIGGER IF EXISTS rag_indexes_touch_updated;
+DELIMITER $$
+CREATE TRIGGER rag_indexes_touch_updated
+BEFORE UPDATE ON rag_indexes
+FOR EACH ROW
+BEGIN
+  IF (NEW.object_count <> OLD.object_count)
+     OR (NEW.vector_count <> OLD.vector_count)
+     OR (NEW.status <> OLD.status) THEN
+    SET NEW.updated = CURRENT_TIMESTAMP;
+  END IF;
+END$$
+DELIMITER ;
 
 -- 6) 데이터 소스(MVP: Notion, local)
 CREATE TABLE data_sources (
