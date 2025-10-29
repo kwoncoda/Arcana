@@ -31,6 +31,14 @@ class _KeywordIndex:
     ids: List[str]
 
 
+@dataclass(slots=True)
+class CollectionStats:
+    """Chroma 컬렉션 통계를 표현하는 데이터 클래스."""
+
+    vector_count: int
+    page_count: int
+
+
 def _tokenize(text: str) -> List[str]:
     """Tokenize text for BM25 retrieval."""
 
@@ -156,6 +164,24 @@ class ChromaRAGService:
             self._keyword_indexes[key] = keyword_index
         return keyword_index
 
+    def _prepare_documents(
+        self,
+        documents: Iterable[Document],
+    ) -> Tuple[List[Document], List[str]]:
+        """문서 메타데이터를 정규화하고 식별자 목록을 반환한다."""
+
+        normalized: List[Document] = []
+        ids: List[str] = []
+        for index, doc in enumerate(documents):
+            metadata = dict(doc.metadata or {})
+            chunk_id = metadata.get("chunk_id")
+            rag_id = chunk_id or metadata.get("page_id") or f"{index}-{uuid4()}"
+            metadata.setdefault("rag_document_id", rag_id)
+            doc.metadata = metadata
+            normalized.append(doc)
+            ids.append(chunk_id or rag_id)
+        return normalized, ids
+
     def upsert_documents(
         self,
         workspace_idx: int,
@@ -167,18 +193,9 @@ class ChromaRAGService:
         store = self._get_vectorstore(
             workspace_idx, workspace_name, storage_uri=storage_uri
         )
-        docs: List[Document] = list(documents)
+        docs, ids = self._prepare_documents(documents)
         if not docs:
             return 0
-
-        ids: List[str] = []
-        for index, doc in enumerate(docs):
-            metadata = dict(doc.metadata or {})
-            chunk_id = metadata.get("chunk_id")
-            rag_id = chunk_id or metadata.get("page_id") or f"{index}-{uuid4()}"
-            metadata.setdefault("rag_document_id", rag_id)
-            doc.metadata = metadata
-            ids.append(chunk_id or rag_id)
 
         store.add_documents(documents=docs, ids=ids)
         key = self._cache_key(
@@ -186,6 +203,65 @@ class ChromaRAGService:
         )
         self._invalidate_keyword_index(key)
         return len(docs)
+
+    def replace_documents(
+        self,
+        workspace_idx: int,
+        workspace_name: str,
+        documents: Iterable[Document],
+        *,
+        storage_uri: Optional[str] = None,
+    ) -> int:
+        """특정 페이지와 연관된 기존 청크를 제거한 뒤 새로운 문서를 저장한다."""
+
+        store = self._get_vectorstore(
+            workspace_idx, workspace_name, storage_uri=storage_uri
+        )
+        docs, ids = self._prepare_documents(documents)
+        if not docs:
+            return 0
+
+        page_ids = {
+            str(doc.metadata.get("page_id"))
+            for doc in docs
+            if doc.metadata and doc.metadata.get("page_id")
+        }
+        for page_id in page_ids:
+            try:
+                store.delete(where={"page_id": page_id})
+            except Exception:
+                # 제거 실패 시에도 이후 add_documents를 시도한다.
+                continue
+
+        store.add_documents(documents=docs, ids=ids)
+        key = self._cache_key(
+            workspace_idx, workspace_name, storage_uri=storage_uri
+        )
+        self._invalidate_keyword_index(key)
+        return len(docs)
+
+    def collection_stats(
+        self,
+        workspace_idx: int,
+        workspace_name: str,
+        *,
+        storage_uri: Optional[str] = None,
+    ) -> CollectionStats:
+        """현재 컬렉션의 벡터 수와 페이지 수를 계산한다."""
+
+        store = self._get_vectorstore(
+            workspace_idx, workspace_name, storage_uri=storage_uri
+        )
+        raw = store.get(include=["metadatas"])
+        ids = raw.get("ids") or []
+        metadatas = raw.get("metadatas") or []
+        page_ids = set()
+        for metadata in metadatas:
+            if isinstance(metadata, dict):
+                page_id = metadata.get("page_id")
+                if page_id:
+                    page_ids.add(str(page_id))
+        return CollectionStats(vector_count=len(ids), page_count=len(page_ids))
 
     def _document_key(self, doc: Document, fallback: int) -> str:
         metadata = doc.metadata or {}
