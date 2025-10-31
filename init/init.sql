@@ -71,33 +71,6 @@ CREATE TABLE rag_indexes (
   CONSTRAINT fk_rag_ws FOREIGN KEY (workspace_idx) REFERENCES workspaces(idx)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='워크스페이스별 RAG 인덱스 메타';
 
--- INSERT 시에는 무조건 1970-01-01로 고정 (ORM이 값을 넣어도 강제)
-DROP TRIGGER IF EXISTS rag_indexes_force_1970_on_insert;
-DELIMITER $$
-CREATE TRIGGER rag_indexes_force_1970_on_insert
-BEFORE INSERT ON rag_indexes
-FOR EACH ROW
-BEGIN
-  SET NEW.updated = '1970-01-01 00:00:00';
-END$$
-DELIMITER ;
-
--- UPDATE 시, '인덱싱 관련' 변화가 있을 때만 updated를 현재시각으로 갱신
--- (원하면 조건을 더/덜 넣으세요)
-DROP TRIGGER IF EXISTS rag_indexes_touch_updated;
-DELIMITER $$
-CREATE TRIGGER rag_indexes_touch_updated
-BEFORE UPDATE ON rag_indexes
-FOR EACH ROW
-BEGIN
-  IF (NEW.object_count <> OLD.object_count)
-     OR (NEW.vector_count <> OLD.vector_count)
-     OR (NEW.status <> OLD.status) THEN
-    SET NEW.updated = CURRENT_TIMESTAMP;
-  END IF;
-END$$
-DELIMITER ;
-
 -- 6) 데이터 소스(MVP: Notion, local)
 CREATE TABLE data_sources (
   idx            BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '데이터 소스 인스턴스 PK',

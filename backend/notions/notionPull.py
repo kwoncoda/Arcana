@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone, tzinfo
+from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Dict, Iterable, List, Optional
 
 from notion_client import AsyncClient
@@ -28,18 +28,11 @@ _SKIP_BLOCK_TYPES: set[str] = {
 }
 
 
-def _local_timezone() -> tzinfo:
-    """Return the host machine's local timezone or UTC as a fallback."""
-
-    tz = datetime.now(timezone.utc).astimezone().tzinfo
-    return tz or timezone.utc
-
-
 def _normalize_to_utc(value: datetime) -> datetime:
     """Convert ``value`` to a timezone-aware UTC datetime."""
 
     if value.tzinfo is None:
-        localized = value.replace(tzinfo=_local_timezone())
+        localized = value.replace(tzinfo=timezone.utc)
     else:
         localized = value
     return localized.astimezone(timezone.utc)

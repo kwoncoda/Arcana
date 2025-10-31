@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json  
 from typing import Optional
 
@@ -270,6 +271,7 @@ async def pull_all_pages(
     rag_index.object_count = stats.page_count
     rag_index.vector_count = stats.vector_count
     rag_index.status = "ready"
+    rag_index.updated = datetime.now(timezone.utc)
 
     try:
         db.commit()
