@@ -2,7 +2,8 @@ import docx  # Word(.docx) 파일을 읽고 분석하는 라이브러리
 import io    # 메모리 상에서 파일을 다루기 위한 라이브러리 (파일 호환성 문제 해결용)
 from fastapi import FastAPI, UploadFile, File, HTTPException  
 from fastapi.responses import FileResponse  
-from pathlib import Path  # 운영체제에 상관없이 파일 경로를 다루기 위한 도구
+from pathlib import Path  # 운영체제에 상관없이 파일 경로를 다루기
+from pyhwp import HWPReader  # pyhwp 라이브러리에서 HWPReader 가져옴
 
 
 # 현재 이 파이썬 파일(local.py)이 위치한 폴더의 절대 경로를 계산
@@ -57,6 +58,23 @@ async def convert_file_to_json(file: UploadFile = File(...)):
             except UnicodeDecodeError:
                 # 2-2. utf-8 실패 시 윈도우 한글 환경에서 자주 사용되는 cp949로 다시 시도
                 content = file_content_bytes.decode('cp949', errors='ignore')
+        
+        elif filename.endswith('.hwp'):
+            file_type = "hwp"
+            
+            # .hwp 파일 처리
+            # 1. 파일 내용을 메모리로 읽음
+            file_content = await file.read()
+            
+            # 2. 호환성을 위해 메모리 상의 가상 파일로 만듦
+            file_stream = io.BytesIO(file_content)
+            
+            # 3. HWPReader를 사용해 가상 파일을 읽음
+            reader = HWPReader(file_stream)
+            
+            # 4. get_text() 메소드를 사용해 문서의 전체 텍스트를 추출
+            content = reader.get_text()        
+        
         else:
             # 지원하는 확장자가 아닐 경우 400번 에러 발생
             raise HTTPException(status_code=400, detail="Unsupported file format. Please upload a .docx file.")
@@ -71,4 +89,3 @@ async def convert_file_to_json(file: UploadFile = File(...)):
         "file_type": file_type,
         "content": content
     }
-
