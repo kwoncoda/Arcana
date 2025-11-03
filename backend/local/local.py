@@ -89,4 +89,3 @@ async def convert_file_to_json(file: UploadFile = File(...)):
         "file_type": file_type,
         "content": content
     }
-
