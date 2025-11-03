@@ -395,15 +395,30 @@ async def pull_all_shared_page_text(
         pages: List[Dict[str, Any]] = []
         total_pages = 0
         skipped_pages = 0
+        skipped_page_details: List[Dict[str, Any]] = []
+        attempted_at = datetime.now(timezone.utc)
+        comparison_point_iso = comparison_point.isoformat() if comparison_point else None
 
         async for page in _iter_shared_pages(client):
             total_pages += 1
-            notion_timestamp = _parse_notion_timestamp(page.get("last_edited_time"))
+            page_id = str(page.get("id"))
+            notion_last_edited_str = page.get("last_edited_time")
+            notion_timestamp = _parse_notion_timestamp(notion_last_edited_str)
+            notion_timestamp_iso = notion_timestamp.isoformat() if notion_timestamp else None
+
             if comparison_point and notion_timestamp and notion_timestamp <= comparison_point:
                 skipped_pages += 1
+                skipped_page_details.append(
+                    {
+                        "page_id": page_id,
+                        "last_edited_time": notion_last_edited_str,
+                        "last_edited_time_utc": notion_timestamp_iso,
+                        "comparison_point": comparison_point_iso,
+                        "attempted_at": attempted_at.isoformat(),
+                    }
+                )
                 continue
 
-            page_id = str(page.get("id"))
             blocks = await _fetch_page_blocks(client, page_id)
             pages.append(
                 {
@@ -420,6 +435,8 @@ async def pull_all_shared_page_text(
         "count": len(pages),
         "total_pages": total_pages,
         "skipped_pages": skipped_pages,
+        "skipped_page_details": skipped_page_details,
         "updated_after": comparison_point.isoformat() if comparison_point else None,
+        "attempted_at": attempted_at.isoformat(),
     }
 
