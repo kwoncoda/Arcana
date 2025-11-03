@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import os
+import re
 from copy import deepcopy
-from typing import Any, Dict, Iterable, List, Optional
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Sequence
 
+import tiktoken
 from langchain_core.documents import Document
 
+from .renderer import RenderedBlock, collect_rendered_blocks
 
-DEFAULT_CHUNK_SIZE = 1200
+DEFAULT_CHUNK_SIZE = 800
 _DEFAULT_CHUNK_OVERLAP_RATIO = 0.1
 
 
@@ -29,46 +33,201 @@ def _load_chunk_overlap_ratio() -> float:
 DEFAULT_CHUNK_OVERLAP_RATIO = _load_chunk_overlap_ratio()
 
 
-def _clean_text_lines(lines: Iterable[str]) -> List[str]:
-    """Remove blank lines and non-string entries from the incoming iterable."""
+def _get_token_encoder() -> tiktoken.Encoding:
+    """Return a cached token encoder for counting tokens."""
 
-    cleaned: List[str] = []
-    for line in lines:
-        if not isinstance(line, str):
+    return tiktoken.get_encoding("cl100k_base")
+
+
+_ENC = _get_token_encoder()
+
+def count_tokens(text: str) -> int:
+    """Return the number of tokens for the given string."""
+
+    if not text:
+        return 0
+    return len(_ENC.encode(text))
+
+
+_BLOCK_TYPE_MARKERS: Dict[str, str] = {
+    "heading_1": "H1",
+    "heading_2": "H2",
+    "heading_3": "H3",
+    "paragraph": "P",
+    "bulleted_list_item": "BULLET",
+    "numbered_list_item": "NUMBERED",
+    "to_do": "TODO",
+    "toggle": "TOGGLE",
+    "divider": "DIV",
+    "quote": "QUOTE",
+    "code": "CODE",
+    "callout": "CALLOUT",
+    "child_page": "CHILD_PAGE",
+    "child_database": "CHILD_DB",
+    "synced_block": "SYNC",
+    "table": "TABLE",
+    "table_row": "ROW",
+    "column_list": "COLUMN_LIST",
+    "column": "COLUMN",
+    "equation": "EQUATION",
+    "bookmark": "BOOKMARK",
+    "image": "IMAGE",
+    "video": "VIDEO",
+    "pdf": "PDF",
+    "file": "FILE",
+    "audio": "AUDIO",
+    "embed": "EMBED",
+    "link_preview": "LINK_PREVIEW",
+    "table_of_contents": "TOC",
+    "breadcrumb": "BREADCRUMB",
+}
+
+
+
+def _marker_for_type(block_type: str) -> str:
+    """Map a Notion block type to a stable marker token."""
+
+    if not block_type:
+        return "BLOCK"
+
+    base = _BLOCK_TYPE_MARKERS.get(block_type)
+    if base:
+        return base
+
+    sanitized = re.sub(r"[^A-Za-z0-9]+", "_", block_type).strip("_")
+    return sanitized.upper() or "BLOCK"
+
+
+@dataclass(frozen=True)
+class AnnotatedSegment:
+    """A rendered Markdown block annotated with structural metadata."""
+
+    type: str
+    depth: int
+    marker: str
+    body: str
+    plain_body: str
+    separator: str
+    token_length: int
+
+
+def _build_annotated_segments(blocks: Sequence[RenderedBlock]) -> List[AnnotatedSegment]:
+    """Convert rendered blocks into annotated Markdown segments."""
+
+    segments: List[AnnotatedSegment] = []
+    total = len(blocks)
+
+    for index, block in enumerate(blocks):
+        if not block.text:
             continue
-        stripped = line.strip()
-        if stripped:
-            cleaned.append(stripped)
-    return cleaned
+
+        marker = _marker_for_type(block.type)
+        plain_body = block.text
+        if "\n" in block.text:
+            body = f"[[{marker}]]\n{block.text}\n[[/{marker}]]"
+        else:
+            body = f"[[{marker}]] {block.text} [[/{marker}]]"
+
+        if index == total - 1:
+            separator = ""
+        elif block.trailing_blank:
+            separator = "\n\n"
+        else:
+            separator = "\n"
+
+        token_length = count_tokens(body + separator)
+        segments.append(
+            AnnotatedSegment(
+                type=block.type,
+                depth=block.depth,
+                marker=marker,
+                body=body,
+                plain_body=plain_body,
+                separator=separator,
+                token_length=token_length,
+            )
+        )
+
+    return segments
+
+def _update_fence_state(text: str, fence_open: bool) -> bool:
+    """Track fenced code block boundaries while scanning text."""
+
+def _chunk_segments(
+    segments: Sequence[AnnotatedSegment],
+    *,
+    max_tokens: int,
+    overlap: int,
+) -> List[List[AnnotatedSegment]]:
+    """Split annotated segments into token-aware chunks."""
+
+    if not segments:
+        return []
+
+    if max_tokens <= 0:
+        return [list(segments)]
+
+    chunks: List[List[AnnotatedSegment]] = []
+    current: List[AnnotatedSegment] = []
+    current_tokens = 0
+
+    for segment in segments:
+        if current and current_tokens + segment.token_length > max_tokens:
+            chunks.append(current)
+
+            if overlap > 0:
+                retained: List[AnnotatedSegment] = []
+                retained_tokens = 0
+                for previous in reversed(current):
+                    if retained_tokens + previous.token_length > overlap:
+                        break
+                    retained.insert(0, previous)
+                    retained_tokens += previous.token_length
+                current = retained
+                current_tokens = retained_tokens
+            else:
+                current = []
+                current_tokens = 0
+
+        current.append(segment)
+        current_tokens += segment.token_length
+
+    if current:
+        chunks.append(current)
+
+    return chunks
 
 
-def _gather_block_text(block: Dict[str, Any]) -> List[str]:
-    """Recursively collect all text values from a Notion block tree."""
+def _build_chunk_payload(
+    segments: Sequence[AnnotatedSegment],
+) -> Dict[str, Any]:
+    """Assemble text and structural metadata for a chunk."""
 
-    text_lines = _clean_text_lines(block.get("text", []))
-    for child in block.get("children", []):
-        text_lines.extend(_gather_block_text(child))
-    return text_lines
+    if not segments:
+        return {
+            "text": "",
+            "plain_text": "",
+        }
 
+    parts: List[str] = []
+    plain_parts: List[str] = []
 
-def _combine_page_text(blocks: Iterable[Dict[str, Any]]) -> List[str]:
-    """Flatten the text from all blocks that belong to a page."""
+    for segment in segments:
+        parts.append(segment.body)
+        if segment.plain_body:
+            plain_parts.append(segment.plain_body)
 
-    combined: List[str] = []
-    for block in blocks:
-        combined.extend(_gather_block_text(block))
-    return combined
+        if segment.separator:
+            parts.append(segment.separator)
+            plain_parts.append(segment.separator)
 
+    text = "".join(parts).rstrip()
+    plain_text = "".join(plain_parts).rstrip()
 
-def _resolve_page_url(page: Dict[str, Any]) -> str:
-    """Return the canonical URL for a Notion page."""
-
-    explicit_url = page.get("url")
-    if isinstance(explicit_url, str) and explicit_url.strip():
-        return explicit_url.strip()
-
-    page_id = str(page.get("page_id", "")).replace("-", "")
-    return f"https://www.notion.so/{page_id}"
+    return {
+        "text": text,
+        "plain_text": plain_text,
+    }
 
 
 def _calculate_chunk_overlap(
@@ -88,86 +247,75 @@ def _calculate_chunk_overlap(
     return max(0, estimated)
 
 
-def _chunk_text(text: str, *, chunk_size: int, chunk_overlap: int) -> List[str]:
-    """Split text into chunks using the provided size and overlap."""
-
-    if chunk_size <= 0:
-        return [text] if text else []
-
-    if chunk_overlap >= chunk_size:
-        chunk_overlap = max(0, chunk_size - 1)
-
-    chunks: List[str] = []
-    start = 0
-    text_length = len(text)
-
-    while start < text_length:
-        end = min(start + chunk_size, text_length)
-        chunk = text[start:end].strip()
-        if chunk:
-            chunks.append(chunk)
-        if end == text_length:
-            break
-        start = max(end - chunk_overlap, start + 1)
-    return chunks
-
-
 def build_jsonl_records_from_pages(
     pages: List[Dict[str, Any]],
     *,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     chunk_overlap: Optional[int] = None,
-) -> List[Dict[str, str]]:
+) -> List[Dict[str, Any]]:
     """Convert Notion page payloads into JSONL ready records."""
 
-    records: List[Dict[str, str]] = []
-    effective_chunk_overlap = _calculate_chunk_overlap(chunk_size, chunk_overlap)
+    records: List[Dict[str, Any]] = []
+    effective_overlap = _calculate_chunk_overlap(chunk_size, chunk_overlap)
 
     for page in pages:
         page_id = str(page.get("page_id"))
         title = str(page.get("title") or "")
         last_edited_time = str(page.get("last_edited_time") or "")
-        page_url = _resolve_page_url(page)
+        page_url = str(page.get("url") or "")
+        blocks = page.get("blocks", []) or []
 
-        text_lines = _combine_page_text(page.get("blocks", []))
-        if not text_lines:
-            record = {
-                "page_id": page_id,
-                "title": title,
-                "last_edited_time": last_edited_time,
-                "text": "",
-                "page_url": page_url,
-            }
-            records.append(record)
+        rendered_blocks = collect_rendered_blocks(blocks)
+        annotated_segments = _build_annotated_segments(rendered_blocks)
+
+        if not annotated_segments:
+            records.append(
+                {
+                    "page_id": page_id,
+                    "title": title,
+                    "last_edited_time": last_edited_time,
+                    "page_url": page_url,
+                    "text": "",
+                    "plain_text": "",
+                    "format": "markdown",
+                }
+            )
             continue
 
-        full_text = "\n".join(text_lines)
-        for chunk in _chunk_text(
-            full_text,
-            chunk_size=chunk_size,
-            chunk_overlap=effective_chunk_overlap,
-        ):
-            record = {
-                "page_id": page_id,
-                "title": title,
-                "last_edited_time": last_edited_time,
-                "text": chunk,
-                "page_url": page_url,
-            }
-            records.append(record)
+        segment_chunks = _chunk_segments(
+            annotated_segments,
+            max_tokens=chunk_size,
+            overlap=effective_overlap,
+        )
+
+        for chunk_segments in segment_chunks:
+            payload = _build_chunk_payload(chunk_segments)
+            records.append(
+                {
+                    "page_id": page_id,
+                    "title": title,
+                    "last_edited_time": last_edited_time,
+                    "page_url": page_url,
+                    "text": payload["text"],
+                    "plain_text": payload["plain_text"],
+                    "format": "markdown",
+                }
+            )
+
     return records
 
 
 def build_documents_from_records(
-    records: List[Dict[str, str]],
+    records: List[Dict[str, Any]],
     workspace_metadata: Dict[str, Any],
 ) -> List[Document]:
     """Create LangChain documents from JSONL records."""
 
     documents: List[Document] = []
     for index, record in enumerate(records):
-        text = record.get("text", "")
-        if not text:
+        plain_text = record.get("plain_text") or ""
+        formatted_text = record.get("text") or plain_text
+        if not plain_text.strip():
             continue
 
         metadata = deepcopy(workspace_metadata)
@@ -179,9 +327,12 @@ def build_documents_from_records(
                 "last_edited_time": record.get("last_edited_time"),
                 "chunk_id": f"{record.get('page_id')}:{index}",
                 "chunk_index": index,
+                "format": record.get("format", "markdown"),
+                "formatted_text": formatted_text,
+                "plain_text": plain_text,
             }
         )
-        document = Document(page_content=text, metadata=metadata)
+        document = Document(page_content=plain_text, metadata=metadata)
         documents.append(document)
     return documents
 

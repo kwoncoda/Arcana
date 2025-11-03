@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Dict, Iterable, List, Optional
 
 from notion_client import AsyncClient
@@ -27,6 +28,33 @@ _SKIP_BLOCK_TYPES: set[str] = {
 }
 
 
+def _normalize_to_utc(value: datetime) -> datetime:
+    """Convert ``value`` to a timezone-aware UTC datetime."""
+
+    if value.tzinfo is None:
+        localized = value.replace(tzinfo=timezone.utc)
+    else:
+        localized = value
+    return localized.astimezone(timezone.utc)
+
+
+def _parse_notion_timestamp(value: Optional[str]) -> Optional[datetime]:
+    """Notion에서 내려오는 ISO8601 타임스탬프를 UTC 기준 ``datetime``으로 변환한다."""
+
+    if not value:
+        return None
+
+    try:
+        normalized = value.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 @dataclass(slots=True)
 class TextBlock:
     """Structured representation of a textual Notion block."""
@@ -45,45 +73,177 @@ class TextBlock:
         }
 
 
-def _flatten_rich_text(items: Iterable[Dict[str, Any]]) -> List[str]:
-    texts: List[str] = []
+def _apply_rich_text_annotations(plain: str, *, annotations: Optional[Dict[str, Any]], href: Optional[str]) -> str:
+    """주어진 리치 텍스트 조각을 마크다운 문법으로 감싼다."""
+
+    if not plain:
+        return ""
+
+    # 코드 블록은 다른 꾸밈보다 우선 적용한다.
+    if annotations and annotations.get("code"):
+        content = f"`{plain}`"
+    else:
+        content = plain
+        if annotations:
+            if annotations.get("bold"):
+                content = f"**{content}**"
+            if annotations.get("italic"):
+                content = f"*{content}*"
+            if annotations.get("strikethrough"):
+                content = f"~~{content}~~"
+            if annotations.get("underline"):
+                # 마크다운에 기본 밑줄 문법이 없어 HTML 태그로 감싼다.
+                content = f"<u>{content}</u>"
+
+    if href:
+        return f"[{content}]({href})"
+    return content
+
+
+def _render_rich_text(items: Iterable[Dict[str, Any]]) -> tuple[str, str]:
+    """리치 텍스트 배열을 마크다운/평문 문자열로 동시에 반환한다."""
+
+    markdown_parts: List[str] = []
+    plain_parts: List[str] = []
+
     for item in items:
         plain = item.get("plain_text")
-        if plain:
-            stripped = plain.strip()
-            if stripped:
-                texts.append(stripped)
-    return texts
+        if not plain:
+            continue
+        markdown_parts.append(
+            _apply_rich_text_annotations(
+                plain,
+                annotations=item.get("annotations"),
+                href=item.get("href"),
+            )
+        )
+        plain_parts.append(plain)
+
+    return "".join(markdown_parts), "".join(plain_parts)
+
+
+def _flatten_rich_text(items: Iterable[Dict[str, Any]]) -> List[str]:
+    """Notion rich_text 배열을 평문 문자열 리스트로 평탄화한다."""
+    out: List[str] = []
+    if not items:
+        return out
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        # 1순위: plain_text
+        pt = it.get("plain_text")
+        if isinstance(pt, str) and pt:
+            out.append(pt)
+            continue
+        # 2순위: text.content (일부 SDK/shape에서 plain_text가 비어 있을 수 있음)
+        txt = it.get("text")
+        if isinstance(txt, dict):
+            content = txt.get("content")
+            if isinstance(content, str) and content:
+                out.append(content)
+    return out
 
 
 def _extract_text_payload(block: Dict[str, Any]) -> List[str]:
     block_type = block.get("type", "")
     data = block.get(block_type) or {}
-    texts: List[str] = []
+
+    markdown_fragments: List[str] = []
+    plain_fragments: List[str] = []
 
     if isinstance(data, dict):
         if isinstance(data.get("rich_text"), list):
-            texts.extend(_flatten_rich_text(data["rich_text"]))
+            markdown, plain = _render_rich_text(data["rich_text"])
+            if markdown:
+                markdown_fragments.append(markdown)
+            if plain:
+                plain_fragments.append(plain)
         if isinstance(data.get("title"), list):
-            texts.extend(_flatten_rich_text(data["title"]))
+            markdown, plain = _render_rich_text(data["title"])
+            if markdown:
+                markdown_fragments.append(markdown)
+            if plain:
+                plain_fragments.append(plain)
         if isinstance(data.get("caption"), list):
-            texts.extend(_flatten_rich_text(data["caption"]))
-        if block_type == "equation":
-            expression = data.get("expression")
-            if isinstance(expression, str) and expression.strip():
-                texts.append(expression.strip())
-        if block_type == "to_do":
-            # Completed state also provides context.
-            checked = data.get("checked")
-            if isinstance(checked, bool):
-                texts.append("[x]" if checked else "[ ]")
+            markdown, plain = _render_rich_text(data["caption"])
+            if markdown:
+                markdown_fragments.append(markdown)
+            if plain:
+                plain_fragments.append(plain)
 
-    if block_type == "child_page":
-        title = data.get("title")
+    markdown_text_raw = "".join(markdown_fragments)
+    markdown_text = markdown_text_raw.strip()
+    plain_text_raw = "".join(plain_fragments)
+
+    lines: List[str] = []
+
+    if block_type == "heading_1":
+        if markdown_text:
+            lines.append(f"# {markdown_text}")
+    elif block_type == "heading_2":
+        if markdown_text:
+            lines.append(f"## {markdown_text}")
+    elif block_type == "heading_3":
+        if markdown_text:
+            lines.append(f"### {markdown_text}")
+    elif block_type == "bulleted_list_item":
+        if markdown_text:
+            lines.append(f"- {markdown_text}")
+    elif block_type == "numbered_list_item":
+        if markdown_text:
+            lines.append(f"1. {markdown_text}")
+    elif block_type == "to_do":
+        checked = False
+        if isinstance(data, dict):
+            checked = bool(data.get("checked"))
+        box = "x" if checked else " "
+        content = markdown_text
+        if content:
+            lines.append(f"- [{box}] {content}")
+        else:
+            lines.append(f"- [{box}]")
+    elif block_type == "quote":
+        if markdown_text:
+            lines.append(f"> {markdown_text}")
+    elif block_type == "callout":
+        emoji = ""
+        icon = data.get("icon") if isinstance(data, dict) else None
+        if isinstance(icon, dict):
+            emoji_value = icon.get("emoji")
+            if isinstance(emoji_value, str) and emoji_value.strip():
+                emoji = f"{emoji_value.strip()} "
+        if markdown_text or emoji:
+            lines.append(f"> {emoji}{markdown_text}".rstrip())
+    elif block_type == "code":
+        language = ""
+        if isinstance(data, dict):
+            language = str(data.get("language") or "").strip()
+        fence = f"```{language}" if language else "```"
+        lines.append(fence)
+        code_body = plain_text_raw.rstrip("\n")
+        if code_body:
+            lines.extend(code_body.splitlines())
+        lines.append("```")
+    elif block_type == "equation":
+        expression = ""
+        if isinstance(data, dict):
+            expression = str(data.get("expression") or "").strip()
+        if expression:
+            lines.append(f"$$ {expression} $$")
+    elif block_type == "divider":
+        lines.append("---")
+    elif block_type == "toggle":
+        if markdown_text:
+            lines.append(f"- {markdown_text}")
+    elif block_type == "child_page":
+        title = data.get("title") if isinstance(data, dict) else None
         if isinstance(title, str) and title.strip():
-            texts.append(title.strip())
+            lines.append(f"## {title.strip()}")
+    else:
+        if markdown_text:
+            lines.append(markdown_text)
 
-    return [t for t in texts if t]
+    return [line for line in lines if isinstance(line, str) and line]
 
 
 async def _collect_children(client: AsyncClient, block_id: str) -> List[Dict[str, Any]]:
@@ -195,11 +355,12 @@ def _extract_page_title(page: Dict[str, Any]) -> str:
     # Root pages expose title within the `properties` payload.
     properties = page.get("properties")
     if isinstance(properties, dict):
-        title_prop = properties.get("title")
-        if isinstance(title_prop, dict):
-            title = _flatten_rich_text(title_prop.get("title", []))
-            if title:
-                return " ".join(title)
+        for prop in properties.values():
+            if isinstance(prop, dict) and prop.get("type") == "title":
+                title_items = prop.get("title", [])
+                title = _flatten_rich_text(title_items)
+                if title:
+                    return " ".join(title).strip()
 
     # As a fallback, check the top-level `title` key (databases use this shape).
     title_items = page.get("title")
@@ -215,16 +376,49 @@ def _extract_page_title(page: Dict[str, Any]) -> str:
 async def pull_all_shared_page_text(
     db: Session,
     cred: NotionOauthCredentials,
+    *,
+    updated_after: Optional[datetime] = None,
 ) -> Dict[str, Any]:
-    """Return textual content for every page shared with the integration."""
+    """Return textual content for pages updated after ``updated_after``.
+
+    전체 페이지를 매번 재수집하는 대신, 마지막 갱신 시각 이후에 수정된 페이지만
+    필터링하여 반환한다. ``updated_after``가 ``None``이면 모든 페이지를 반환한다.
+    """
 
     refreshed = await ensure_valid_access_token(db, cred)
 
+    comparison_point: Optional[datetime] = None
+    if updated_after:
+        comparison_point = _normalize_to_utc(updated_after)
+
     async with AsyncClient(auth=refreshed.access_token, notion_version=_NOTION_VERSION) as client:
         pages: List[Dict[str, Any]] = []
+        total_pages = 0
+        skipped_pages = 0
+        skipped_page_details: List[Dict[str, Any]] = []
+        attempted_at = datetime.now(timezone.utc)
+        comparison_point_iso = comparison_point.isoformat() if comparison_point else None
 
         async for page in _iter_shared_pages(client):
+            total_pages += 1
             page_id = str(page.get("id"))
+            notion_last_edited_str = page.get("last_edited_time")
+            notion_timestamp = _parse_notion_timestamp(notion_last_edited_str)
+            notion_timestamp_iso = notion_timestamp.isoformat() if notion_timestamp else None
+
+            if comparison_point and notion_timestamp and notion_timestamp <= comparison_point:
+                skipped_pages += 1
+                skipped_page_details.append(
+                    {
+                        "page_id": page_id,
+                        "last_edited_time": notion_last_edited_str,
+                        "last_edited_time_utc": notion_timestamp_iso,
+                        "comparison_point": comparison_point_iso,
+                        "attempted_at": attempted_at.isoformat(),
+                    }
+                )
+                continue
+
             blocks = await _fetch_page_blocks(client, page_id)
             pages.append(
                 {
@@ -239,5 +433,10 @@ async def pull_all_shared_page_text(
     return {
         "pages": pages,
         "count": len(pages),
+        "total_pages": total_pages,
+        "skipped_pages": skipped_pages,
+        "skipped_page_details": skipped_page_details,
+        "updated_after": comparison_point.isoformat() if comparison_point else None,
+        "attempted_at": attempted_at.isoformat(),
     }
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import BigInteger, Column, DateTime, String, Boolean, Text, JSON, Integer
+from sqlalchemy import BigInteger, Column, DateTime, String, Boolean, Text, JSON, Integer, text
 
 from utils.db import Base
 
@@ -81,7 +81,7 @@ class RagIndex(Base):
     status = Column(String(20), nullable=False, default="ready")
     object_count = Column(Integer, nullable=False, default=0)
     vector_count = Column(Integer, nullable=False, default=0)
-    updated = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated = Column(DateTime, nullable=False, server_default=text("'1970-01-01 00:00:00'"))
 
 class NotionOauthCredentials(Base):
     __tablename__ = "notion_oauth_credentials"

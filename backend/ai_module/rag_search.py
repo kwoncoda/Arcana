@@ -175,7 +175,11 @@ class WorkspaceRAGSearchAgent:
             url = metadata.get("page_url") or metadata.get("source") or "URL 미상"
             chunk_id = metadata.get("chunk_id") or metadata.get("rag_document_id")
             page_id = metadata.get("page_id")
-            snippet = self._truncate(doc.page_content, limit=1200)
+            formatted_text = metadata.get("formatted_text") or metadata.get("text")
+            if formatted_text:
+                snippet = self._truncate(formatted_text, limit=1200)
+            else:
+                snippet = self._truncate(doc.page_content, limit=1200)
             try:
                 score_display = f"{float(raw_score):.4f}"
             except (TypeError, ValueError):
@@ -204,7 +208,9 @@ class WorkspaceRAGSearchAgent:
             chunk_id = metadata.get("chunk_id") or metadata.get("rag_document_id")
             if chunk_id and chunk_id in citations:
                 continue
-            snippet = self._truncate(" ".join(doc.page_content.split()), limit=360)
+            formatted_text = metadata.get("formatted_text") or metadata.get("text")
+            source_text = formatted_text or doc.page_content
+            snippet = self._truncate(" ".join(source_text.split()), limit=360)
             try:
                 chunk_index = (
                     int(metadata.get("chunk_index"))

@@ -1,6 +1,7 @@
 """노션 페이지 생성 기능."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -23,20 +24,98 @@ class NotionPageReference:
     title: str
 
 
-def _rich_text(content: str, *, chunk_size: int = 1800) -> List[Dict[str, Any]]:
-    """긴 문자열을 노션 rich_text 조각으로 분할한다."""
+_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+_BOLD_PATTERN = re.compile(r"\*\*(.+?)\*\*")
+
+
+def _build_rich_text_chunk(text: str, *, bold: bool = False, link: Optional[str] = None) -> Dict[str, Any]:
+    """Create a Notion rich text object with optional annotations."""
+
+    chunk: Dict[str, Any] = {"type": "text", "text": {"content": text}}
+    if link:
+        chunk["text"]["link"] = {"url": link}
+    chunk["annotations"] = {
+        "bold": bool(bold),
+        "italic": False,
+        "strikethrough": False,
+        "underline": False,
+        "code": False,
+        "color": "default",
+    }
+    return chunk
+
+
+def _parse_bold_segments(text: str, *, link: Optional[str]) -> List[Dict[str, Any]]:
+    """Split text into bold and normal segments preserving order."""
 
     segments: List[Dict[str, Any]] = []
-    if not content:
-        return [{"type": "text", "text": {"content": ""}}]
-
-    start = 0
-    length = len(content)
-    while start < length:
-        chunk = content[start : start + chunk_size]
-        segments.append({"type": "text", "text": {"content": chunk}})
-        start += chunk_size
+    last_index = 0
+    for match in _BOLD_PATTERN.finditer(text):
+        start, end = match.span()
+        if start > last_index:
+            prefix = text[last_index:start]
+            if prefix:
+                segments.append({"text": prefix, "bold": False, "link": link})
+        bold_text = match.group(1)
+        if bold_text:
+            segments.append({"text": bold_text, "bold": True, "link": link})
+        last_index = end
+    if last_index < len(text):
+        tail = text[last_index:]
+        if tail:
+            segments.append({"text": tail, "bold": False, "link": link})
     return segments
+
+
+def _parse_inline_markdown(content: str) -> List[Dict[str, Any]]:
+    """Convert simple inline markdown to annotated rich text tokens."""
+
+    tokens: List[Dict[str, Any]] = []
+    last_index = 0
+    for match in _LINK_PATTERN.finditer(content):
+        start, end = match.span()
+        if start > last_index:
+            prefix = content[last_index:start]
+            tokens.extend(_parse_bold_segments(prefix, link=None))
+        link_text = match.group(1)
+        link_url = match.group(2).strip()
+        tokens.extend(_parse_bold_segments(link_text, link=link_url))
+        last_index = end
+    if last_index < len(content):
+        tokens.extend(_parse_bold_segments(content[last_index:], link=None))
+    return tokens or [{"text": content, "bold": False, "link": None}]
+
+
+def _rich_text(
+    content: str,
+    *,
+    chunk_size: int = 1800,
+    parse_inline: bool = True,
+) -> List[Dict[str, Any]]:
+    """긴 문자열을 노션 rich_text 조각으로 분할한다."""
+
+    if not content:
+        return [_build_rich_text_chunk("")]
+
+    tokens = (
+        _parse_inline_markdown(content)
+        if parse_inline
+        else [{"text": content, "bold": False, "link": None}]
+    )
+
+    segments: List[Dict[str, Any]] = []
+    for token in tokens:
+        text = token["text"]
+        bold = token.get("bold", False)
+        link = token.get("link")
+        start = 0
+        while start < len(text):
+            chunk = text[start : start + chunk_size]
+            segments.append(
+                _build_rich_text_chunk(chunk, bold=bold, link=link)
+            )
+            start += chunk_size
+    return segments or [_build_rich_text_chunk("")]
 
 
 def _paragraph_block(text: str) -> Dict[str, Any]:
@@ -78,10 +157,14 @@ def _code_block(code: str, language: Optional[str]) -> Dict[str, Any]:
         "object": "block",
         "type": "code",
         "code": {
-            "rich_text": _rich_text(code, chunk_size=1500),
+            "rich_text": _rich_text(code, chunk_size=1500, parse_inline=False),
             "language": (language or "plain text").lower(),
         },
     }
+
+
+def _divider_block() -> Dict[str, Any]:
+    return {"object": "block", "type": "divider", "divider": {}}
 
 
 def _markdown_to_blocks(markdown: str) -> List[Dict[str, Any]]:
@@ -116,7 +199,9 @@ def _markdown_to_blocks(markdown: str) -> List[Dict[str, Any]]:
         if not stripped:
             continue
 
-        if stripped.startswith("# "):
+        if stripped in {"---", "***", "___"} or set(stripped) == {"-"}:
+            blocks.append(_divider_block())
+        elif stripped.startswith("# "):
             blocks.append(_heading_block(stripped[2:].strip(), 1))
         elif stripped.startswith("## "):
             blocks.append(_heading_block(stripped[3:].strip(), 2))
