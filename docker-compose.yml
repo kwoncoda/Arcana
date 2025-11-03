@@ -32,6 +32,17 @@ services:
     volumes:
       - ./backend:/app
       - workspace-storage:/app/storage/workspace
+  
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: arcana-frontend
+    ports:
+      - "5173:5173"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=5173
 
 volumes:
   mysql-data:
