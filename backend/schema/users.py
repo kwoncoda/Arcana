@@ -43,3 +43,19 @@ class TokenRefreshResponse(BaseModel):
 
     access_token: str
     refresh_token: str
+
+
+class ExternalToolStatus(BaseModel):
+    """외부 도구 연동 상태 정보를 응답하기 위한 모델."""
+
+    type: str
+    name: str
+    status: str
+    connected: bool
+    synced: datetime | None = None
+
+
+class ExternalToolConnectionsResponse(BaseModel):
+    """사용자 워크스페이스의 외부 도구 연동 현황 응답."""
+
+    connections: list[ExternalToolStatus]
