@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import styled, { css } from 'styled-components';
 import axios from 'axios';
+// 1. useNavigate, Link import
 import { useNavigate, Link } from 'react-router-dom';
 
 // --- Styled Components ---
@@ -55,7 +56,7 @@ const Label = styled.label`
 
 const Input = styled.input`
   width: 100%;
-  padding: 16px 16px;
+  padding: 14px 16px;
   font-size: 16px;
   border: 1px solid #E0E0E0;
   background-color: #F7F7F9;
@@ -73,14 +74,14 @@ const Input = styled.input`
   }
 
   &:disabled {
-    background-color: #EFEFEF;
+    background-color: #E0E0E0;
     cursor: not-allowed;
   }
 `;
 
 const Button = styled.button`
   width: 100%;
-  padding: 16px;
+  padding: 14px;
   font-size: 16px;
   font-weight: 700;
   border-radius: 8px;
@@ -129,27 +130,26 @@ const Button = styled.button`
   
   &:disabled {
     background-color: #BDBDBD;
+    color: #757575;
     cursor: not-allowed;
+    
+    &:hover {
+      background-color: #BDBDBD;
+    }
   }
 `;
 
-const SocialIcon = styled.span`
-  font-weight: 900;
+const ErrorMessage = styled.p`
   font-size: 14px;
-  
-  ${(props) => props.$social === 'kakao' && css`
-    background-color: rgba(0,0,0,0.1);
-    border-radius: 5px;
-    padding: 2px 5px;
-    font-size: 12px;
-  `}
-
-  ${(props) => props.$social === 'google' && css`
-    color: #4285F4; 
-    font-family: 'Arial', sans-serif;
-  `}
+  color: #D32F2F;
+  background-color: #FFEBEE;
+  border: 1px solid #FFCDD2;
+  border-radius: 8px;
+  padding: 12px;
+  width: 100%;
+  text-align: center;
+  margin: -10px 0 16px 0;
 `;
-
 
 const SignUpLink = styled(Link)`
   font-size: 14px;
@@ -187,24 +187,6 @@ const Separator = styled.div`
   }
 `;
 
-const Footer = styled.footer`
-  margin-top: 30px;
-  font-size: 12px;
-  color: #AAA;
-`;
-
-const ErrorMessage = styled.p`
-  font-size: 14px;
-  color: #D32F2F;
-  background-color: #FFEBEE;
-  border: 1px solid #FFCDD2;
-  border-radius: 8px;
-  padding: 12px;
-  width: 100%;
-  text-align: center;
-  margin: 0 0 16px 0;
-`;
-
 // --- React Component ---
 
 function LoginPage() {
@@ -213,6 +195,7 @@ function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   
+  // 2. useNavigate 훅 사용
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
@@ -220,28 +203,31 @@ function LoginPage() {
     setLoading(true);
     setError(null);
 
-    const apiUrl = '/api/users/login'; // vite.config.js 프록시가 처리
+    // vite.config.js의 프록시 설정에 따라 /api로 시작
+    const apiUrl = '/api/users/login'; 
 
     try {
       const response = await axios.post(apiUrl, { id, password });
       
+      const { access_token, refresh_token } = response.data;
       console.log('Login Success:', response.data);
-      // 토큰 저장 (예시)
-      // localStorage.setItem('accessToken', response.data.access_token);
-      // localStorage.setItem('refreshToken', response.data.refresh_token);
-      
-      navigate('/dashboard'); // 로그인 성공 시 대시보드로 이동
-      
+
+      // 3. 토큰을 localStorage에 저장
+      localStorage.setItem('accessToken', access_token);
+      localStorage.setItem('refreshToken', refresh_token);
+
+      // 4. 대시보드로 이동
+      navigate('/dashboard');
+
     } catch (err) {
       if (err.response && err.response.status === 401) {
         setError(err.response.data.detail || '아이디 또는 비밀번호가 올바르지 않습니다.');
       } else {
         console.error('Login Error:', err);
-        setError('로그인 중 오류가 발생했습니다. 네트워크를 확인하세요.');
+        setError('로그인 중 오류가 발생했습니다. 네트워크를 확인해주세요.');
       }
-    } finally {
       setLoading(false);
-    }
+    } 
   };
 
   return (
@@ -281,23 +267,22 @@ function LoginPage() {
         </Button>
       </Form>
 
+      {/* 5. SignUpLink를 Link 컴포넌트로 사용 */}
       <SignUpLink to="/register">
         아직 계정이 없으신가요? 회원가입하러 가기
       </SignUpLink>
 
       <Separator>또는</Separator>
 
-      <Button $social="kakao">
-        <SocialIcon $social="kakao">TALK</SocialIcon>
+      <Button $social="kakao" disabled={loading}>
+        {/* 아이콘 영역 (추후 svg/img 태그) */}
         카카오톡으로 3초만에 로그인
       </Button>
       
-      <Button $social="google">
-        <SocialIcon $social="google">G</SocialIcon>
+      <Button $social="google" disabled={loading}>
+        {/* 아이콘 영역 (추후 svg/img 태그) */}
         구글ID 로그인으로 회원가입
       </Button>
-
-      <Footer>Copyright ⓒ Arcana 모든 권리 보유</Footer>
     </Container>
   );
 }

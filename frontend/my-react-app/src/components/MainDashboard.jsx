@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react'; // useEffect 추가
 import styled from 'styled-components';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
+import axios from 'axios'; // axios 추가
 import { 
   Home, 
   MessageSquare, 
@@ -37,7 +38,7 @@ const Sidebar = styled.nav`
   flex-direction: column;
   flex-shrink: 0;
 
-  /* --- 768px 이하 숨김 --- */
+  /* --- 768px 이하면 사이드바 숨김 --- */
   @media (max-width: 768px) {
     display: none;
   }
@@ -78,7 +79,7 @@ const AnalyticsSidebar = styled.aside`
   overflow-y: auto;
   border-left: 1px solid #E2E8F0;
 
-  /* --- 1280px 이하 숨김 --- */
+  /* --- 1280px 이하면 분석 사이드바 숨김 --- */
   @media (max-width: 1280px) {
     display: none;
   }
@@ -126,18 +127,12 @@ const NavItem = styled.li`
   color: #CBD5E0;
   cursor: pointer;
   gap: 10px;
+  /* Link로 사용될 때 a 태그의 기본 스타일을 덮어씁니다. */
+  text-decoration: none; 
 
   &:hover {
     background-color: #2D3748;
   }
-
-  /* ${(props) =>
-    props.$active &&
-    `
-    background-color: #4A5568;
-    color: #FFFFFF;
-  `}
-  */
 `;
 
 const SectionTitle = styled.h3`
@@ -163,6 +158,15 @@ const DataSourceItem = styled(NavItem)`
     font-weight: 700;
   }
 `;
+
+// DATA SOURCE가 비어있을 때 표시할 컴포넌트
+const EmptyDataSource = styled.div`
+  padding: 10px 12px;
+  font-size: 14px;
+  color: #718096;
+  font-style: italic;
+`;
+
 
 const UpgradeBanner = styled.div`
   background-color: #2D3748;
@@ -290,7 +294,7 @@ const ChatContainer = styled.div`
   gap: 20px;
 `;
 
-// 웰컴 메시지
+// 웰컴 메시지 (채팅 비어있을 때)
 const WelcomeMessage = styled.div`
   background-color: #F7F7F9;
   border: 1px solid #E2E8F0;
@@ -437,26 +441,60 @@ const KnowledgeStat = styled.div`
   }
 `;
 
+// --- (사이드바 렌더링용) 아이콘/스타일 맵 ---
+const providerDetails = {
+  notion: { name: 'Notion', icon: 'N', color: '#000000', bg: '#E0E0E0' },
+  slack: { name: 'Slack', icon: 'S', color: '#4A154B', bg: '#EFE1EF' },
+  jira: { name: 'Jira', icon: 'J', color: '#0052CC', bg: '#DEEBFF' },
+  // 다른 프로바이더가 있다면 여기에 추가
+  // google: { ... } 
+};
 
-// --- Mock Data ---
-const dataSources = [
-  { name: 'Slack', icon: 'S', color: '#4A154B', bg: '#EFE1EF' },
-  { name: 'Notion', icon: 'N', color: '#000000', bg: '#E0E0E0' },
-  { name: 'Jira', icon: 'J', color: '#0052CC', bg: '#DEEBFF' },
-  { name: 'Google Cloud', icon: 'G', color: '#4285F4', bg: '#E8F0FE' },
-  { name: 'Figma', icon: 'F', color: '#F24E1E', bg: '#FCECEA' },
-];
 
 // --- React Component ---
 
 function MainDashboard() {
   const [chatInput, setChatInput] = useState('');
+  // 1. API 응답을 저장할 state
+  const [connections, setConnections] = useState([]); 
+  const [loadingConnections, setLoadingConnections] = useState(true); 
   const navigate = useNavigate();
 
+  // 2. 컴포넌트 마운트 시 API 호출
+  useEffect(() => {
+    const fetchConnections = async () => {
+      try {
+        const token = localStorage.getItem('accessToken');
+        if (!token) {
+          navigate('/login'); // 토큰 없으면 로그인 페이지로
+          return;
+        }
+
+        // GET /users/connections API 호출
+        const res = await axios.get('/api/users/connections', {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        
+        setConnections(res.data.connections || []);
+      } catch (err) {
+        console.error('Failed to fetch connections:', err);
+        if (err.response && (err.response.status === 401 || err.response.status === 404)) {
+          navigate('/login'); // 토큰 만료/워크스페이스 없음 등
+        }
+        // 그 외 에러는 일단 빈 목록으로 표시
+      } finally {
+        setLoadingConnections(false);
+      }
+    };
+
+    fetchConnections();
+  }, [navigate]); // navigate가 변경될 일은 없지만, 의존성 배열에 추가
+
   const handleLogout = () => {
-    // 실제 로그아웃 시 토큰 제거
-    // localStorage.removeItem('accessToken');
-    // localStorage.removeItem('refreshToken');
+    localStorage.removeItem('accessToken');
+    localStorage.removeItem('refreshToken');
     navigate('/login');
   };
 
@@ -474,16 +512,44 @@ function MainDashboard() {
           <SectionTitle>MAIN DASHBOARD</SectionTitle>
           <NavItem><Home size={18} /> 메인화면</NavItem>
           <NavItem><MessageSquare size={18} /> AI 채팅 인터페이스</NavItem>
-          {/* 요청하신 대로 2개 삭제 */}
 
           <SectionTitle>DATA SOURCES</SectionTitle>
-          {dataSources.map(src => (
-            <DataSourceItem key={src.name}>
-              <span style={{ color: src.color, backgroundColor: src.bg }}>{src.icon}</span>
-              {src.name}
-            </DataSourceItem>
-          ))}
-          <NavItem><Plus size={18} /> Add more sources</NavItem>
+          
+          {/* 3. API 응답에 따라 동적으로 렌더링 */}
+          {loadingConnections ? (
+            <EmptyDataSource>연결된 소스 로딩 중...</EmptyDataSource>
+          ) : connections.length > 0 ? (
+            connections.map(conn => {
+              // provider(예: "notion")에 맞는 아이콘과 스타일 찾기
+              const details = providerDetails[conn.provider] || { 
+                name: conn.provider, 
+                icon: conn.provider.charAt(0).toUpperCase(), 
+                color: '#333', 
+                bg: '#eee' 
+              };
+              
+              // status가 'connected'인 경우에만 표시 (명세서 기준)
+              if (conn.status === 'connected') {
+                return (
+                  <DataSourceItem key={conn.provider}>
+                    <span style={{ color: details.color, backgroundColor: details.bg }}>
+                      {details.icon}
+                    </span>
+                    {details.name}
+                  </DataSourceItem>
+                );
+              }
+              return null; // 
+            })
+          ) : (
+            <EmptyDataSource>
+              연결된 소스가 없습니다.
+            </EmptyDataSource>
+          )}
+
+          <NavItem as={Link} to="/connect/notion">
+            <Plus size={18} /> Add more sources
+          </NavItem>
         </NavMenu>
 
         <UpgradeBanner>
@@ -519,6 +585,7 @@ function MainDashboard() {
             </StatItem>
           </TopBarStats>
 
+          {/* */}
           <UserProfile onClick={handleLogout}>
             <div className="avatar">AK</div>
             <div className="user-info"> 
@@ -576,7 +643,6 @@ function MainDashboard() {
               <h3>ANALYTICS</h3>
               <NavItem><Activity size={18} /> AI 채팅 인터페이스</NavItem>
               <NavItem><FileText size={18} /> AI 채팅 인터페이스</NavItem>
-              {/* 요청하신 대로 2개 삭제 */}
             </AnalyticsCard>
 
             <AnalyticsCard>
@@ -592,16 +658,34 @@ function MainDashboard() {
 
             <AnalyticsCard>
               <h3>활성화된 데이터소스</h3>
-              <DataSourceItem>
-                <span style={{ color: dataSources[0].color, backgroundColor: dataSources[0].bg }}>{dataSources[0].icon}</span>
-                {dataSources[0].name}
-              </DataSourceItem>
-              <DataSourceItem>
-                <span style={{ color: dataSources[1].color, backgroundColor: dataSources[1].bg }}>{dataSources[1].icon}</span>
-                {dataSources[1].name}
-              </DataSourceItem>
+              {/* 4. 오른쪽 사이드바에도 동일하게 적용 */}
+              {loadingConnections ? (
+                <EmptyDataSource>로딩 중...</EmptyDataSource>
+              ) : connections.length > 0 ? (
+                connections
+                  .filter(conn => conn.status === 'connected') // 
+                  .map(conn => {
+                    const details = providerDetails[conn.provider] || { 
+                      name: conn.provider, 
+                      icon: conn.provider.charAt(0).toUpperCase(), 
+                      color: '#333', 
+                      bg: '#eee' 
+                    };
+                    return (
+                      <DataSourceItem key={conn.provider}>
+                        <span style={{ color: details.color, backgroundColor: details.bg }}>
+                          {details.icon}
+                        </span>
+                        {details.name}
+                      </DataSourceItem>
+                    );
+                  })
+              ) : (
+                <EmptyDataSource>
+                  연결된 소스가 없습니다.
+                </EmptyDataSource> 
+              )}
             </AnalyticsCard>
-
           </AnalyticsSidebar>
         </div>
       </MainContent>
