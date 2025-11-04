@@ -17,16 +17,20 @@ from schema.users import (
     RegisterRequest,
     TokenRefreshRequest,
     TokenRefreshResponse,
+    ExternalToolConnectionsResponse,
+    ExternalToolStatus,
 )
 from models import (
     DEFAULT_RAG_INDEX_NAME,
     Membership,
     Organization,
     RagIndex,
+    DataSource,
     Workspace,
     WorkspaceType,
     User,
 )
+from dependencies import get_current_user
 from utils.auth import (
     InvalidTokenError,
     create_access_token,
@@ -35,6 +39,7 @@ from utils.auth import (
 )
 from utils.db import Base, get_db
 from utils.workspace_storage import ensure_workspace_storage
+from utils.workspace import resolve_user_primary_workspace, WorkspaceResolutionError
 
 
 import logging
@@ -353,3 +358,43 @@ def refresh_tokens(
         access_token=access_token,
         refresh_token=refresh_token,
     )
+
+
+@router.get(
+    "/connections",
+    response_model=ExternalToolConnectionsResponse,
+    summary="사용자의 외부 도구 연동 현황",
+)
+def list_external_tool_connections(
+    *,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ExternalToolConnectionsResponse:
+    """사용자의 기본 워크스페이스에 연결된 외부 도구 목록을 반환한다."""
+
+    try:
+        workspace = resolve_user_primary_workspace(db, user)
+    except WorkspaceResolutionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    data_sources = db.scalars(
+        select(DataSource).where(
+            DataSource.workspace_idx == workspace.idx,
+        )
+    ).all()
+
+    connections = [
+        ExternalToolStatus(
+            type=data_source.type,
+            name=data_source.name,
+            status=data_source.status,
+            connected=data_source.status == "connected",
+            synced=data_source.synced,
+        )
+        for data_source in data_sources
+    ]
+
+    return ExternalToolConnectionsResponse(connections=connections)
