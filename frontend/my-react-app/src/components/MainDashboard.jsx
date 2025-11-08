@@ -447,26 +447,7 @@ const providerDetails = {
   slack: { name: 'Slack', icon: 'S', color: '#4A154B', bg: '#EFE1EF' },
   jira: { name: 'Jira', icon: 'J', color: '#0052CC', bg: '#DEEBFF' },
   // 다른 프로바이더가 있다면 여기에 추가
-  // google: { ... }
-};
-
-const getProviderDetails = connection => {
-  const providerKey = (connection?.type || connection?.name || '').toLowerCase();
-  const baseDetails = providerDetails[providerKey];
-
-  if (baseDetails) {
-    return baseDetails;
-  }
-
-  const fallbackName = connection?.name || connection?.type || 'Unknown';
-  const fallbackIcon = fallbackName ? fallbackName.charAt(0).toUpperCase() : '?';
-
-  return {
-    name: fallbackName,
-    icon: fallbackIcon,
-    color: '#333',
-    bg: '#eee',
-  };
+  // google: { ... } 
 };
 
 
@@ -538,12 +519,19 @@ function MainDashboard() {
           {loadingConnections ? (
             <EmptyDataSource>연결된 소스 로딩 중...</EmptyDataSource>
           ) : connections.length > 0 ? (
-            connections.map((conn, index) => {
-              const details = getProviderDetails(conn);
-
+            connections.map(conn => {
+              // provider(예: "notion")에 맞는 아이콘과 스타일 찾기
+              const details = providerDetails[conn.provider] || { 
+                name: conn.provider, 
+                icon: conn.provider.charAt(0).toUpperCase(), 
+                color: '#333', 
+                bg: '#eee' 
+              };
+              
+              // status가 'connected'인 경우에만 표시 (명세서 기준)
               if (conn.status === 'connected') {
                 return (
-                  <DataSourceItem key={`${details.name}-${index}`}>
+                  <DataSourceItem key={conn.provider}>
                     <span style={{ color: details.color, backgroundColor: details.bg }}>
                       {details.icon}
                     </span>
@@ -551,7 +539,7 @@ function MainDashboard() {
                   </DataSourceItem>
                 );
               }
-              return null;
+              return null; // 
             })
           ) : (
             <EmptyDataSource>
@@ -675,12 +663,16 @@ function MainDashboard() {
                 <EmptyDataSource>로딩 중...</EmptyDataSource>
               ) : connections.length > 0 ? (
                 connections
-                  .filter(conn => conn.status === 'connected')
-                  .map((conn, index) => {
-                    const details = getProviderDetails(conn);
-
+                  .filter(conn => conn.status === 'connected') // 
+                  .map(conn => {
+                    const details = providerDetails[conn.provider] || { 
+                      name: conn.provider, 
+                      icon: conn.provider.charAt(0).toUpperCase(), 
+                      color: '#333', 
+                      bg: '#eee' 
+                    };
                     return (
-                      <DataSourceItem key={`${details.name}-analytics-${index}`}>
+                      <DataSourceItem key={conn.provider}>
                         <span style={{ color: details.color, backgroundColor: details.bg }}>
                           {details.icon}
                         </span>

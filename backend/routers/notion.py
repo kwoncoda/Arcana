@@ -6,8 +6,7 @@ from datetime import datetime, timezone
 import json  
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from notion_client.errors import APIResponseError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -159,7 +158,7 @@ async def notion_oauth_callback(
 
     cred = apply_oauth_tokens(db, cred, token_json, mark_connected=True)
 
-    return RedirectResponse(url="http://localhost:5173/dashboard")
+    return Response(status_code=200)
 
 
 def _get_connected_credential(
