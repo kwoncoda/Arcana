@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'; // useEffect 추가
+import React, { useState, useEffect, useCallback } from 'react'; // useEffect 추가
 import styled from 'styled-components';
 import { useNavigate, Link } from 'react-router-dom';
 import axios from 'axios'; // axios 추가
@@ -7,7 +7,8 @@ import {
   MessageSquare, 
   Database, 
   Settings, 
-  Plus, 
+  Plus,
+  RefreshCw,
   ChevronDown, 
   User, 
   Send, 
@@ -62,8 +63,57 @@ const TopBar = styled.header`
   flex-shrink: 0;
 `;
 
+const TopBarActions = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 12px;
+`;
+
+const RefreshButton = styled.button`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background-color: #EDF2F7;
+  color: #1A202C;
+  border: 1px solid #CBD5E0;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background-color 0.2s ease;
+
+  &:hover {
+    background-color: #E2E8F0;
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.65;
+    background-color: #E2E8F0;
+  }
+`;
+
+const SYNC_STATUS_COLORS = {
+  success: { bg: '#EDFDF7', border: '#9AE6B4', color: '#22543D' },
+  error: { bg: '#FFF5F5', border: '#FEB2B2', color: '#742A2A' },
+  warning: { bg: '#FFFBEB', border: '#FBD38D', color: '#744210' },
+  info: { bg: '#EBF8FF', border: '#90CDF4', color: '#2B6CB0' },
+};
+
+const SyncStatusBar = styled.div`
+  margin: 12px 24px 0;
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  background-color: ${({ $variant }) => (SYNC_STATUS_COLORS[$variant] || SYNC_STATUS_COLORS.info).bg};
+  border: 1px solid ${({ $variant }) => (SYNC_STATUS_COLORS[$variant] || SYNC_STATUS_COLORS.info).border};
+  color: ${({ $variant }) => (SYNC_STATUS_COLORS[$variant] || SYNC_STATUS_COLORS.info).color};
+`;
+
 const ChatWrapper = styled.div`
-  flex: 1; 
+  flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -475,46 +525,203 @@ const getProviderDetails = connection => {
 function MainDashboard() {
   const [chatInput, setChatInput] = useState('');
   // 1. API 응답을 저장할 state
-  const [connections, setConnections] = useState([]); 
-  const [loadingConnections, setLoadingConnections] = useState(true); 
+  const [connections, setConnections] = useState([]);
+  const [loadingConnections, setLoadingConnections] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState(null);
   const navigate = useNavigate();
+
+  const fetchConnections = useCallback(async (tokenOverride) => {
+    setLoadingConnections(true);
+    try {
+      const token = tokenOverride || localStorage.getItem('accessToken');
+      if (!token) {
+        navigate('/login');
+        return [];
+      }
+
+      // GET /users/connections API 호출
+      const res = await axios.get('/api/users/connections', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      const fetchedConnections = res.data.connections || [];
+      setConnections(fetchedConnections);
+      return fetchedConnections;
+    } catch (err) {
+      console.error('Failed to fetch connections:', err);
+      const status = err?.response?.status;
+      if (status === 401 || status === 404) {
+        localStorage.removeItem('accessToken');
+        localStorage.removeItem('refreshToken');
+        navigate('/login');
+      }
+      throw err;
+    } finally {
+      setLoadingConnections(false);
+    }
+  }, [navigate]);
 
   // 2. 컴포넌트 마운트 시 API 호출
   useEffect(() => {
-    const fetchConnections = async () => {
-      try {
-        const token = localStorage.getItem('accessToken');
-        if (!token) {
-          navigate('/login'); // 토큰 없으면 로그인 페이지로
-          return;
-        }
-
-        // GET /users/connections API 호출
-        const res = await axios.get('/api/users/connections', {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
-        
-        setConnections(res.data.connections || []);
-      } catch (err) {
-        console.error('Failed to fetch connections:', err);
-        if (err.response && (err.response.status === 401 || err.response.status === 404)) {
-          navigate('/login'); // 토큰 만료/워크스페이스 없음 등
-        }
-        // 그 외 에러는 일단 빈 목록으로 표시
-      } finally {
-        setLoadingConnections(false);
-      }
-    };
-
-    fetchConnections();
-  }, [navigate]); // navigate가 변경될 일은 없지만, 의존성 배열에 추가
+    fetchConnections().catch(() => {
+      // 초기 로딩 시 에러는 콘솔에 기록되었으므로 UI에서 별도 처리하지 않습니다.
+    });
+  }, [fetchConnections]); // navigate가 변경될 일은 없지만, 의존성 배열에 추가
 
   const handleLogout = () => {
     localStorage.removeItem('accessToken');
     localStorage.removeItem('refreshToken');
     navigate('/login');
+  };
+
+  const handleRefreshKnowledge = async () => {
+    if (syncing) return;
+
+    const token = localStorage.getItem('accessToken');
+    if (!token) {
+      setSyncMessage({
+        variant: 'error',
+        message: '로그인이 필요합니다. 다시 로그인해주세요.'
+      });
+      navigate('/login');
+      return;
+    }
+
+    const headers = {
+      'Authorization': `Bearer ${token}`
+    };
+
+    setSyncing(true);
+    setSyncMessage({
+      variant: 'info',
+      message: '지식 베이스를 갱신 중입니다...'
+    });
+
+    let availableConnections = connections;
+
+    try {
+      try {
+        const fetchedConnections = await fetchConnections(token);
+        if (Array.isArray(fetchedConnections)) {
+          availableConnections = fetchedConnections;
+        }
+      } catch (error) {
+        const status = error?.response?.status;
+        if (status === 401 || status === 404) {
+          setSyncMessage({
+            variant: 'error',
+            message: '세션이 만료되었습니다. 다시 로그인해주세요.'
+          });
+          return;
+        }
+        console.error('Failed to refresh connections before syncing:', error);
+      }
+
+      const connectedSources = (availableConnections || []).filter(
+        (conn) => conn && (conn.status === 'connected' || conn.connected)
+      );
+
+      if (connectedSources.length === 0) {
+        setSyncMessage({
+          variant: 'warning',
+          message: '연결된 데이터 소스가 없습니다. 먼저 데이터 소스를 연동해주세요.'
+        });
+        return;
+      }
+
+      const successMessages = [];
+      const skippedSources = [];
+      const failureMessages = [];
+      let unauthorizedDetected = false;
+
+      for (const source of connectedSources) {
+        if (unauthorizedDetected) {
+          break;
+        }
+
+        const type = (source?.type || '').toLowerCase();
+        const displayName = source?.name || source?.type || 'Unknown';
+
+        if (type === 'notion') {
+          try {
+            const response = await axios.post('/api/notion/pages/pull', {}, { headers });
+            const ingested = response?.data?.ingested_chunks;
+            if (typeof ingested === 'number') {
+              successMessages.push(`${displayName}: ${ingested}개 청크 갱신`);
+            } else {
+              successMessages.push(`${displayName}: 갱신 완료`);
+            }
+          } catch (error) {
+            const status = error?.response?.status;
+            if (status === 401) {
+              unauthorizedDetected = true;
+              localStorage.removeItem('accessToken');
+              localStorage.removeItem('refreshToken');
+              navigate('/login');
+              failureMessages.push(`${displayName}: 인증이 만료되었습니다. 다시 로그인해주세요.`);
+            } else {
+              const detail =
+                error?.response?.data?.detail ||
+                error?.message ||
+                '알 수 없는 오류가 발생했습니다.';
+              failureMessages.push(`${displayName}: ${detail}`);
+            }
+          }
+        } else {
+          skippedSources.push(displayName);
+        }
+      }
+
+      if (unauthorizedDetected) {
+        setSyncMessage({
+          variant: 'error',
+          message: failureMessages.join(' ')
+        });
+        return;
+      }
+
+      if (failureMessages.length > 0) {
+        setSyncMessage({
+          variant: 'error',
+          message: `일부 데이터 소스 갱신에 실패했습니다. ${failureMessages.join(' | ')}`
+        });
+        return;
+      }
+
+      if (successMessages.length > 0 && skippedSources.length > 0) {
+        setSyncMessage({
+          variant: 'info',
+          message: `${successMessages.join(' | ')}. ${skippedSources.join(', ')} 데이터 소스는 아직 자동 갱신을 지원하지 않습니다.`
+        });
+        return;
+      }
+
+      if (successMessages.length > 0) {
+        setSyncMessage({
+          variant: 'success',
+          message: `모든 연결된 데이터 소스를 갱신했습니다. ${successMessages.join(' | ')}`
+        });
+        return;
+      }
+
+      if (skippedSources.length > 0) {
+        setSyncMessage({
+          variant: 'warning',
+          message: `${skippedSources.join(', ')} 데이터 소스는 아직 자동 갱신을 지원하지 않습니다.`
+        });
+        return;
+      }
+
+      setSyncMessage({
+        variant: 'info',
+        message: '지식 베이스 갱신을 완료했습니다.'
+      });
+    } finally {
+      setSyncing(false);
+    }
   };
 
   return (
@@ -597,15 +804,26 @@ function MainDashboard() {
             </StatItem>
           </TopBarStats>
 
-          {/* */}
-          <UserProfile onClick={handleLogout}>
-            <div className="avatar">AK</div>
-            <div className="user-info"> 
-              <span>Aiden Kim</span>
-              <ChevronDown size={18} />
-            </div>
-          </UserProfile>
+          <TopBarActions>
+            <RefreshButton onClick={handleRefreshKnowledge} disabled={syncing}>
+              <RefreshCw size={16} />
+              {syncing ? '갱신 중...' : '지식 베이스 갱신'}
+            </RefreshButton>
+            <UserProfile onClick={handleLogout}>
+              <div className="avatar">AK</div>
+              <div className="user-info">
+                <span>Aiden Kim</span>
+                <ChevronDown size={18} />
+              </div>
+            </UserProfile>
+          </TopBarActions>
         </TopBar>
+
+        {syncMessage && (
+          <SyncStatusBar $variant={syncMessage.variant}>
+            {syncMessage.message}
+          </SyncStatusBar>
+        )}
 
         {/* 2.2 Chat Area & Analytics Area */}
         <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
