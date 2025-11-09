@@ -30,9 +30,9 @@ else:
 
 CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI") or os.getenv("GOOGLE_DRIVE_REDIRECT_URI")
-AUTH_URI = os.getenv("GOOGLE_AUTH_URI", "https://accounts.google.com/o/oauth2/v2/auth")
-TOKEN_URI = os.getenv("GOOGLE_TOKEN_URI", "https://oauth2.googleapis.com/token")
+REDIRECT_URI = os.getenv("GOOGLE_DRIVE_REDIRECT_URI")
+AUTH_URI = os.getenv("GOOGLE_AUTH_URI")
+TOKEN_URI = os.getenv("GOOGLE_TOKEN_URI")
 USER_INFO_ENDPOINT = "https://openidconnect.googleapis.com/v1/userinfo"
 
 if not CLIENT_ID or not CLIENT_SECRET or not REDIRECT_URI:
