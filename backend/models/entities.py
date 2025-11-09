@@ -106,8 +106,28 @@ class DataSource(Base):
     __tablename__ = "data_sources"
     idx = Column(BigInteger, primary_key=True, autoincrement=True)
     workspace_idx = Column(BigInteger, nullable=False)  # FK: workspaces.idx
-    type = Column(String(20), nullable=False)           # 'notion'
+    type = Column(String(20), nullable=False)           # 'notion', 'googledrive', 'local'
     name = Column(String(200), nullable=False)
     status = Column(String(20), nullable=False, default="connected")  # connected/disconnected/error
     synced = Column(DateTime, nullable=True)
     created = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class GoogleDriveOauthCredentials(Base):
+    __tablename__ = "google_drive_oauth_credentials"
+
+    idx = Column(BigInteger, primary_key=True, autoincrement=True)
+    user_idx = Column(BigInteger, nullable=False)          # FK: users.idx
+    data_source_idx = Column(BigInteger, nullable=False)   # FK: data_sources.idx
+    provider = Column(String(50), nullable=False, default="googledrive")
+    google_user_id = Column(String(255), nullable=True)
+    email = Column(String(255), nullable=True)
+    token_type = Column(String(20), nullable=False, default="Bearer")
+    access_token = Column(Text, nullable=False)
+    refresh_token = Column(Text, nullable=True)
+    scope = Column(Text, nullable=True)
+    id_token = Column(Text, nullable=True)
+    expires = Column(DateTime, nullable=True)
+    created = Column(DateTime, nullable=False, default=lambda: datetime.utcnow())
+    updated = Column(DateTime, nullable=False, default=lambda: datetime.utcnow())
+    provider_payload = Column(JSON, nullable=True)

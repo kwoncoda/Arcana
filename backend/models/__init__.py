@@ -8,7 +8,8 @@ from .entities import (
     WorkspaceType,
     User,
     NotionOauthCredentials,
-    DataSource
+    GoogleDriveOauthCredentials,
+    DataSource,
 )
 
 
@@ -24,6 +25,7 @@ __all__ = [
     "WorkspaceType",
     "User",
     "NotionOauthCredentials",
+    "GoogleDriveOauthCredentials",
     "DataSource",
     "DEFAULT_RAG_INDEX_NAME",
 ]
