@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import styled from 'styled-components';
 import axios from 'axios';
 import { useNavigate, Link } from 'react-router-dom';
@@ -42,12 +42,22 @@ const Title = styled.h2`
   align-self: flex-start;
 `;
 
+const IntegrationGrid = styled.div`
+  display: grid;
+  width: 100%;
+  gap: 20px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+`;
+
 const ContentBox = styled.div`
   width: 100%;
   padding: 24px;
   background-color: #F7F7F9;
   border: 1px solid #E0E0E0;
   border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 `;
 
 const Description = styled.p`
@@ -65,22 +75,38 @@ const Button = styled.button`
   border-radius: 8px;
   border: none;
   cursor: pointer;
-  background-color: #000000; // Notion 
+  background-color: #000000; // 기본값은 Notion 컬러
   color: white;
   display: flex;
   justify-content: center;
   align-items: center;
   gap: 10px;
-  margin-top: 20px;
-  
+
   &:hover {
-    background-color: #333;
+    filter: brightness(0.9);
   }
 
   &:disabled {
     background-color: #BDBDBD;
     cursor: not-allowed;
   }
+`;
+
+const GoogleButton = styled(Button)`
+  background-color: #1A73E8;
+`;
+
+const ProviderBadge = styled.div`
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: ${(props) => props.bg || '#E0E0E0'};
+  color: ${(props) => props.color || '#000'};
+  font-weight: 700;
+  font-size: 16px;
 `;
 
 const ErrorMessage = styled.p`
@@ -118,6 +144,8 @@ const ButtonLogo = styled.img`
 function NotionConnectPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [googleError, setGoogleError] = useState(null);
   const navigate = useNavigate();
 
   const handleSubmit = async () => {
@@ -153,6 +181,7 @@ function NotionConnectPage() {
         window.location.href = authorize_url;
       } else {
         setError('연동 URL을 받지 못했습니다.');
+        setLoading(false);
       }
 
     } catch (err) {
@@ -175,6 +204,61 @@ function NotionConnectPage() {
     }
   };
 
+  const handleGoogleConnect = async () => {
+    setGoogleLoading(true);
+    setGoogleError(null);
+
+    const token = localStorage.getItem('accessToken');
+
+    if (!token) {
+      setGoogleError('로그인이 필요합니다. 다시 로그인해주세요.');
+      setGoogleLoading(false);
+      setTimeout(() => navigate('/login'), 2000);
+      return;
+    }
+
+    const apiUrl = '/api/google-drive/connect';
+
+    try {
+      const res = await axios.post(
+        apiUrl,
+        {},
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/json'
+          }
+        }
+      );
+
+      const { authorize_url } = res.data;
+
+      if (authorize_url) {
+        window.location.href = authorize_url;
+      } else {
+        setGoogleError('연동 URL을 받지 못했습니다.');
+        setGoogleLoading(false);
+      }
+    } catch (err) {
+      console.error('Google Drive Connect Error:', err);
+      if (err.response) {
+        if (err.response.status === 401) {
+          setGoogleError('인증에 실패했습니다. 다시 로그인해주세요.');
+          localStorage.removeItem('accessToken');
+          localStorage.removeItem('refreshToken');
+          setTimeout(() => navigate('/login'), 2000);
+        } else if (err.response.status === 404) {
+          setGoogleError('워크스페이스를 찾을 수 없습니다. (404)');
+        } else {
+          setGoogleError(err.response.data.detail || '연동 중 오류가 발생했습니다.');
+        }
+      } else {
+        setGoogleError('네트워크 오류가 발생했습니다. 잠시 후 다시 시도해주세요.');
+      }
+      setGoogleLoading(false);
+    }
+  };
+
   return (
     <Container>
       <Header>
@@ -184,21 +268,37 @@ function NotionConnectPage() {
 
       <Title>데이터 소스 연동</Title>
 
-      <ContentBox>
-        <Description>
-          Arcana가 Notion 워크스페이스에 접근할 수 있도록 권한을 부여합니다.
-          <br/><br/>
-          '연동 시작하기' 버튼을 누르면 Notion 권한 동의 페이지로 이동합니다.
-        </Description>
-        
-        <Button onClick={handleSubmit} disabled={loading}>
-          {/* 3. import한 변수를 src에 사용하고, 스타일(혹은 크기)을 적용합니다. */}
-          <ButtonLogo src={notionLogo} alt="Notion 로고" />
-          Notion 연동 시작하기
-        </Button>
-        
-        {error && <ErrorMessage>{error}</ErrorMessage>}
-      </ContentBox>
+      <IntegrationGrid>
+        <ContentBox>
+          <Description>
+            Arcana가 Notion 워크스페이스에 접근할 수 있도록 권한을 부여합니다.
+            <br/><br/>
+            '연동 시작하기' 버튼을 누르면 Notion 권한 동의 페이지로 이동합니다.
+          </Description>
+
+          <Button onClick={handleSubmit} disabled={loading}>
+            <ButtonLogo src={notionLogo} alt="Notion 로고" />
+            Notion 연동 시작하기
+          </Button>
+
+          {error && <ErrorMessage>{error}</ErrorMessage>}
+        </ContentBox>
+
+        <ContentBox>
+          <Description>
+            Arcana가 Google Drive 파일에 접근할 수 있도록 권한을 부여합니다.
+            <br/><br/>
+            '연동 시작하기' 버튼을 누르면 Google 계정 선택 및 권한 동의 페이지로 이동합니다.
+          </Description>
+
+          <GoogleButton onClick={handleGoogleConnect} disabled={googleLoading}>
+            <ProviderBadge bg="#E8F0FE" color="#1A73E8">G</ProviderBadge>
+            Google Drive 연동 시작하기
+          </GoogleButton>
+
+          {googleError && <ErrorMessage>{googleError}</ErrorMessage>}
+        </ContentBox>
+      </IntegrationGrid>
 
       <BackLink to="/dashboard">← 대시보드로 돌아가기</BackLink>
     </Container>
