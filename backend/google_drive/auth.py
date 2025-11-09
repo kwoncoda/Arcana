@@ -43,6 +43,8 @@ if not CLIENT_ID or not CLIENT_SECRET or not REDIRECT_URI:
 _STATE_TTL = timedelta(minutes=10)
 _STATE: dict[str, datetime] = {}
 
+_REFRESH_SAFETY_WINDOW = timedelta(seconds=90)
+
 
 class GoogleDriveCredentialError(Exception):
     """Raised when a Google Drive credential is missing or disconnected."""
@@ -236,3 +238,61 @@ def get_connected_user_credential(
         raise GoogleDriveCredentialError("Google Drive 연동 토큰을 찾을 수 없습니다.")
 
     return credential
+
+
+def _normalize_expires(expires: Optional[datetime]) -> Optional[datetime]:
+    """Normalize stored expiry timestamps for safe UTC comparisons."""
+
+    if expires is None:
+        return None
+    if expires.tzinfo is None:
+        return expires.replace(tzinfo=timezone.utc)
+    return expires.astimezone(timezone.utc)
+
+
+def should_refresh_token(cred: GoogleDriveOauthCredentials) -> bool:
+    """Return True when the access token is missing or near expiry."""
+
+    if not cred.access_token:
+        return True
+
+    expires = _normalize_expires(cred.expires)
+    if not expires:
+        return False
+
+    return expires <= datetime.now(timezone.utc) + _REFRESH_SAFETY_WINDOW
+
+
+async def refresh_access_token(
+    db: Session, cred: GoogleDriveOauthCredentials
+) -> GoogleDriveOauthCredentials:
+    """Re-issue an access token using Google's refresh token flow."""
+
+    if not cred.refresh_token:
+        raise RuntimeError("리프레시 토큰이 없어 access_token을 재발급할 수 없습니다.")
+
+    data = {
+        "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET,
+        "refresh_token": cred.refresh_token,
+        "grant_type": "refresh_token",
+    }
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(TOKEN_URI, data=data)
+
+    if response.status_code != 200:
+        raise RuntimeError(f"Google 토큰 재발급 실패: {response.text}")
+
+    payload = response.json()
+    return apply_oauth_tokens(db, cred, payload, mark_connected=False)
+
+
+async def ensure_valid_access_token(
+    db: Session, cred: GoogleDriveOauthCredentials
+) -> GoogleDriveOauthCredentials:
+    """Refresh and return credentials when the access token is stale."""
+
+    if should_refresh_token(cred):
+        cred = await refresh_access_token(db, cred)
+    return cred
