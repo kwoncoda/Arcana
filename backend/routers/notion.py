@@ -193,13 +193,20 @@ async def pull_all_pages(
     workspace = _resolve_workspace(db, user)
     credential = _get_connected_credential(db, user=user, workspace=workspace)
 
+    data_source = db.scalar(
+        select(DataSource).where(
+            DataSource.workspace_idx == workspace.idx,
+            DataSource.type == "notion",
+        )
+    )
+
     rag_index = db.scalar(
         select(RagIndex).where(
             RagIndex.workspace_idx == workspace.idx,
             RagIndex.name == DEFAULT_RAG_INDEX_NAME,
         )
     )
-    last_synced_at = rag_index.updated if rag_index else None
+    last_synced_at = data_source.synced if data_source else None
 
     try:
         payload = await pull_all_shared_page_text(
@@ -272,10 +279,15 @@ async def pull_all_pages(
         workspace.name,
         storage_uri=rag_index.storage_uri,
     )
+    now = datetime.now(timezone.utc)
     rag_index.object_count = stats.page_count
     rag_index.vector_count = stats.vector_count
     rag_index.status = "ready"
-    rag_index.updated = datetime.now(timezone.utc)
+    rag_index.updated = now
+
+    if data_source:
+        data_source.synced = now
+        db.add(data_source)
 
     try:
         db.commit()
