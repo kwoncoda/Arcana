@@ -1,19 +1,25 @@
-import os
+import asyncio
 import io
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload
-from googleapiclient.errors import HttpError
-from pathlib import Path
+import os
 import time
-from dotenv import load_dotenv  
+from pathlib import Path
+
+from dotenv import load_dotenv
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+from googleapiclient.http import MediaIoBaseDownload
+
+from google_drive import (
+    GoogleDriveCredentialError,
+    ensure_valid_access_token,
+    get_connected_user_credential,
+)
+from utils.db import SessionLocal
 
 load_dotenv()
 
 SCOPES = ['https://www.googleapis.com/auth/drive']
-TOKEN_FILE = 'token.json'
 
 CONVERTIBLE_MIME_TYPES = [
     'application/vnd.google-apps.document',
@@ -24,47 +30,50 @@ CONVERTIBLE_MIME_TYPES = [
     'application/vnd.openxmlformats-officedocument.presentationml.presentation' # pptx
 ]
 
+def _load_oauth_credential() -> Credentials:
+    """DB에 저장된 OAuth 자격증명으로 Google API Credentials를 생성한다."""
+
+    workspace_idx = int(os.getenv("GOOGLE_DRIVE_WORKSPACE_IDX"))
+    user_idx = int(os.getenv("GOOGLE_DRIVE_USER_IDX"))
+
+    session = SessionLocal()
+    try:
+        credential = get_connected_user_credential(
+            session,
+            workspace_idx=workspace_idx,
+            user_idx=user_idx,
+        )
+
+        async def _ensure() -> None:
+            await ensure_valid_access_token(session, credential)
+
+        asyncio.run(_ensure())
+        session.refresh(credential)
+
+        client_id = os.getenv("GOOGLE_CLIENT_ID")
+        client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+        token_uri = os.getenv("GOOGLE_TOKEN_URI")
+
+        return Credentials(
+            token=credential.access_token,
+            refresh_token=credential.refresh_token,
+            token_uri=token_uri,
+            client_id=client_id,
+            client_secret=client_secret,
+            scopes=SCOPES,
+        )
+    except GoogleDriveCredentialError as error:
+        session.rollback()
+        raise RuntimeError(
+            "Google Drive OAuth 자격증명을 찾을 수 없습니다. 백엔드 OAuth 연동을 먼저 수행하세요."
+        ) from error
+    finally:
+        session.close()
+
+
 def authenticate():
-    creds = None
-    if os.path.exists(TOKEN_FILE):
-        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-    
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            client_id = os.getenv("GOOGLE_CLIENT_ID")
-            client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
-            project_id = os.getenv("GOOGLE_PROJECT_ID")
-            auth_uri = os.getenv("GOOGLE_AUTH_URI")
-            token_uri = os.getenv("GOOGLE_TOKEN_URI")
+    creds = _load_oauth_credential()
 
-            # .env 파일에 값이 제대로 설정되었는지 확인
-            if not client_id or not client_secret:
-                print("[오류] .env 파일에 GOOGLE_CLIENT_ID와 GOOGLE_CLIENT_SECRET이 없습니다.")
-                print(".env 파일을 확인하고 스크립트를 다시 시작하세요.")
-                return None
-
-            # 2. credentials.json 파일 대신, 환경 변수로 client_config 딕셔너리를 만듦
-            client_config = {
-                "installed": {
-                    "client_id": client_id,
-                    "client_secret": client_secret,
-                    "project_id": project_id,
-                    "auth_uri": auth_uri,
-                    "token_uri": token_uri,
-                    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                    "redirect_uris": ["http://localhost"]
-                }
-            }
-            
-            flow = InstalledAppFlow.from_client_config(
-                client_config, SCOPES)
-            creds = flow.run_local_server(port=0)
-
-        with open(TOKEN_FILE, 'w') as token:
-            token.write(creds.to_json())
-    
     try:
         service = build('drive', 'v3', credentials=creds)
         print("구글 드라이브 인증 성공")
@@ -189,11 +198,7 @@ def convert_file_to_pdf(service, file_to_convert):
 
 # 메인 
 if __name__ == '__main__':
-    # token.json이 없거나 만료되었을 때만 인증을 시도
-    if not os.path.exists(TOKEN_FILE):
-         print(f"사용자를 찾을 수 없습니다. 새 인증을 시작합니다.")
-
-    service = authenticate() 
+    service = authenticate()
     if service:
         files_to_process = get_all_convertible_files(service)
         
