@@ -14,12 +14,14 @@ load_dotenv()
 
 SCOPES = ['https://www.googleapis.com/auth/drive']
 TOKEN_FILE = 'token.json'
+
 CONVERTIBLE_MIME_TYPES = [
     'application/vnd.google-apps.document',
     'application/vnd.google-apps.spreadsheet',
     'application/vnd.google-apps.presentation',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document', # docx
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', # xlsx
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation' # pptx
 ]
 
 def authenticate():

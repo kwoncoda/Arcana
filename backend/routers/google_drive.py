@@ -43,6 +43,10 @@ from rag.chroma import ChromaRAGService
 import json
 from datetime import datetime, timezone
 
+
+import os
+FRONT_MAIN_REDIRECT_URL=os.getenv("FRONT_MAIN_REDIRECT_URL")
+
 router = APIRouter(prefix="/google-drive", tags=["google-drive"])
 rag_service = ChromaRAGService()
 
@@ -152,7 +156,7 @@ async def google_drive_oauth_callback(
         ) from exc
 
     apply_oauth_tokens(db, credential, token_payload, user_info, mark_connected=True)
-    return RedirectResponse(url="http://localhost:5173/dashboard")
+    return RedirectResponse(url=FRONT_MAIN_REDIRECT_URL)
 
 
 def get_connected_google_credential(

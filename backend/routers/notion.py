@@ -46,6 +46,9 @@ from notions.ragTransform import (
 
 from rag.chroma import ChromaRAGService  # Chroma 기반 RAG 서비스를 임포트하는 주석
 
+import os
+FRONT_MAIN_REDIRECT_URL=os.getenv("FRONT_MAIN_REDIRECT_URL")
+
 import logging
 logger = logging.getLogger("arcana") 
 
@@ -159,7 +162,7 @@ async def notion_oauth_callback(
 
     cred = apply_oauth_tokens(db, cred, token_json, mark_connected=True)
 
-    return RedirectResponse(url="http://localhost:5173/dashboard")
+    return RedirectResponse(url=FRONT_MAIN_REDIRECT_URL)
 
 
 def _get_connected_credential(
