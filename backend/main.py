@@ -2,7 +2,7 @@ import logging
 
 from fastapi import FastAPI
 
-from routers import aiagent, notion, users
+from routers import aiagent, notion, users, google_drive
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -37,6 +37,7 @@ app = FastAPI(
 
 app.include_router(users.router)
 app.include_router(notion.router)
+app.include_router(google_drive.router)
 app.include_router(aiagent.router)
 
 #api설정값

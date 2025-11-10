@@ -75,14 +75,14 @@ CREATE TABLE rag_indexes (
 CREATE TABLE data_sources (
   idx            BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '데이터 소스 인스턴스 PK',
   workspace_idx  BIGINT NOT NULL                   COMMENT '소스가 귀속되는 워크스페이스 FK',
-  type           ENUM('notion','local') NOT NULL           COMMENT '소스 종류(MVP: notion, local)',
+  type           ENUM('notion','local','googledrive') NOT NULL COMMENT '소스 종류(MVP: notion, local, googledrive)',
   name           VARCHAR(200) NOT NULL             COMMENT '소스 표시명(구분용)',
   status         ENUM('connected','disconnected','error') NOT NULL DEFAULT 'connected' COMMENT '연결 상태',
   synced         DATETIME NULL                     COMMENT '마지막 성공 동기화 시각',
   created        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '생성 시각',
   KEY idx_ws (workspace_idx),
   CONSTRAINT fk_ds_ws FOREIGN KEY (workspace_idx) REFERENCES workspaces(idx)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='외부 데이터 소스 연결(노션)';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='외부 데이터 소스 연결(노션, 구글 드라이브 등)';
 
 -- 7) OAuth 자격증명(노션)
 CREATE TABLE notion_oauth_credentials (
@@ -106,6 +106,29 @@ CREATE TABLE notion_oauth_credentials (
   CONSTRAINT fk_cred_user FOREIGN KEY (user_idx) REFERENCES users(idx),
   CONSTRAINT fk_cred_ds   FOREIGN KEY (data_source_idx) REFERENCES data_sources(idx)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='노션 OAuth 토큰/메타(비밀 값)';
+
+-- 7-1) OAuth 자격증명(구글 드라이브)
+CREATE TABLE google_drive_oauth_credentials (
+  idx             BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '자격증명 PK',
+  user_idx        BIGINT NOT NULL                   COMMENT '승인한 사용자 FK',
+  data_source_idx BIGINT NOT NULL                   COMMENT '연결된 데이터 소스 FK',
+  provider        VARCHAR(50) NOT NULL DEFAULT 'googledrive' COMMENT '제공자 식별',
+  google_user_id  VARCHAR(255) NULL                 COMMENT '구글 사용자 식별자(sub)',
+  email           VARCHAR(255) NULL                 COMMENT '구글 계정 이메일',
+  token_type      VARCHAR(20) NOT NULL DEFAULT 'Bearer' COMMENT '토큰 타입',
+  access_token    TEXT NOT NULL                     COMMENT '액세스 토큰',
+  refresh_token   TEXT NULL                         COMMENT '리프레시 토큰',
+  scope           TEXT NULL                         COMMENT '동의된 스코프',
+  id_token        TEXT NULL                         COMMENT 'ID 토큰(JWT)',
+  expires         DATETIME NULL                     COMMENT '액세스 토큰 만료 시각',
+  created         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '자격증명 생성 시각',
+  updated         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '자격증명 갱신 시각',
+  provider_payload JSON NULL                        COMMENT '원본 응답(JSON)',
+  UNIQUE KEY uk_google_ds_user (data_source_idx, user_idx),
+  KEY idx_google_user (user_idx),
+  CONSTRAINT fk_google_cred_user FOREIGN KEY (user_idx) REFERENCES users(idx),
+  CONSTRAINT fk_google_cred_ds   FOREIGN KEY (data_source_idx) REFERENCES data_sources(idx)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='구글 드라이브 OAuth 토큰/메타(비밀 값)';
 
 -- 8) 노션 동기화 상태(증분/커서만 저장; 컨텐츠는 저장 안 함)
 CREATE TABLE notion_data_source_sync_state (
