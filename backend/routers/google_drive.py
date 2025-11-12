@@ -197,10 +197,14 @@ async def pull_google_drive_files(
     )
     last_synced_at = data_source.synced if data_source else None
 
+    storage_path = ensure_workspace_storage(workspace.name)
+    pdf_download_dir = storage_path / "googledrive" / "pdf"
+
     try:
         files, skipped = await fetch_authorized_text_files(
             credential.access_token,
             modified_after=last_synced_at,
+            download_dir=pdf_download_dir,
         )
     except GoogleDriveAPIError as exc:
         raise HTTPException(
@@ -221,7 +225,6 @@ async def pull_google_drive_files(
     jsonl_lines = [json.dumps(record, ensure_ascii=False) for record in records]
     jsonl_text = "\n".join(jsonl_lines)
 
-    storage_path = ensure_workspace_storage(workspace.name)
     rag_index = db.scalar(
         select(RagIndex).where(
             RagIndex.workspace_idx == workspace.idx,
@@ -292,6 +295,7 @@ async def pull_google_drive_files(
                 "mime_type": file.mime_type,
                 "modified_time": file.modified_time,
                 "format": file.format,
+                "pdf_path": str(file.pdf_path),
                 "text_length": len(file.text),
             }
             for file in files
