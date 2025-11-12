@@ -144,7 +144,6 @@ async def notion_oauth_callback(
     if not code or not state:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="code/state 누락")
 
-    # state 검증 → cred 식별
     try:
         cred_idx, _uid = verify_state(state)
     except ValueError as e:
@@ -227,10 +226,10 @@ async def pull_all_pages(
             detail=f"Notion 데이터 수집 중 오류가 발생했습니다: {exc}",
         ) from exc
         
-    workspace_metadata = {  # 워크스페이스 정보를 문서 메타데이터로 포함하기 위한 딕셔너리 생성 주석
-        "workspace_idx": workspace.idx,  # 워크스페이스 고유 식별자 저장 주석
-        "workspace_type": workspace.type,  # 워크스페이스 유형 저장 주석
-        "workspace_name": workspace.name,  # 워크스페이스 이름 저장 주석
+    workspace_metadata = { 
+        "workspace_idx": workspace.idx,
+        "workspace_type": workspace.type,
+        "workspace_name": workspace.name,
     }
     jsonl_records = build_jsonl_records_from_pages(payload.get("pages", []))  # 수집된 페이지를 JSONL 레코드로 전처리하는 주석
     documents = build_documents_from_records(jsonl_records, workspace_metadata)  # 전처리된 레코드를 LangChain 문서로 변환하는 주석
@@ -298,10 +297,10 @@ async def pull_all_pages(
             detail="RAG 인덱스 메타데이터를 갱신하는 중 오류가 발생했습니다.",
         ) from exc
 
-    return {  # API 응답 페이로드를 구성하는 주석
+    return {
         **payload,  # 원본 Notion 수집 결과를 포함하는 주석
-        "jsonl_records": jsonl_records,  # 전처리된 JSONL 레코드 리스트를 포함하는 주석
-        "jsonl_text": jsonl_text,  # 직렬화된 JSONL 문자열을 포함하는 주석
-        "ingested_chunks": ingested_count,  # Chroma에 적재된 청크 수를 포함하는 주석
-        "last_synced_at": last_synced_at.isoformat() if last_synced_at else None,  # 직전 동기화 기준 시각 주석
+        "jsonl_records": jsonl_records,
+        "jsonl_text": jsonl_text, 
+        "ingested_chunks": ingested_count,  # Chroma에 적재된 청크 수를 포함
+        "last_synced_at": last_synced_at.isoformat() if last_synced_at else None,
     }
