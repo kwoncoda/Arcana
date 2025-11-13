@@ -106,8 +106,9 @@ async def _list_files(
     params = {
         "pageSize": 200,
         "fields": _DEFAULT_FIELDS,
-        "supportsAllDrives": "false",
-        "includeItemsFromAllDrives": "false",
+        "supportsAllDrives": "true",
+        "includeItemsFromAllDrives": "true",
+        "spaces": "drive",
         "orderBy": "modifiedTime desc",
         "q": " and ".join(
             filter(
@@ -115,7 +116,6 @@ async def _list_files(
                 [
                     "trashed=false",
                     "mimeType != 'application/vnd.google-apps.folder'",
-                    "'me' in owners",
                     convertible_query,
                     (
                         f"modifiedTime > '{_format_datetime_for_query(modified_after)}'"
@@ -215,6 +215,7 @@ async def _copy_file_as_google_type(
     response = await client.post(
         f"{FILES_ENDPOINT}/{file_id}/copy",
         headers=headers,
+        params={"supportsAllDrives": "true", "includeItemsFromAllDrives": "true"},
         json=body,
     )
     if response.status_code != 200:
@@ -236,6 +237,7 @@ async def _delete_temporary_file(
         response = await client.delete(
             f"{FILES_ENDPOINT}/{file_id}",
             headers=headers,
+            params={"supportsAllDrives": "true"},
         )
         if response.status_code not in {200, 204}:
             logger.warning(
@@ -288,7 +290,11 @@ async def _download_file_as_pdf(
         response = await client.get(
             f"{FILES_ENDPOINT}/{export_source_id}/export",
             headers=headers,
-            params={"mimeType": _PDF_EXPORT_MIME},
+            params={
+                "mimeType": _PDF_EXPORT_MIME,
+                "supportsAllDrives": "true",
+                "includeItemsFromAllDrives": "true",
+            },
         )
         if response.status_code != 200:
             raise GoogleDriveAPIError(response.text)

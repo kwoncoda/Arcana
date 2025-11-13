@@ -135,6 +135,7 @@ CREATE TABLE google_drive_sync_state (
   idx               BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '동기화 상태 PK',
   data_source_idx   BIGINT NOT NULL UNIQUE            COMMENT 'Google Drive 데이터 소스 FK',
   start_page_token  VARCHAR(255) NULL                 COMMENT 'Changes API startPageToken',
+  pending_page_token VARCHAR(255) NULL                COMMENT 'Changes API nextPageToken pagination cursor',
   latest_history_id VARCHAR(255) NULL                 COMMENT '마지막 historyId(미사용 가능)',
   bootstrapped_at   DATETIME NULL                     COMMENT '최초 전체 스캔 완료 시각',
   last_synced       DATETIME NULL                     COMMENT '마지막 증분 동기화 시각',
