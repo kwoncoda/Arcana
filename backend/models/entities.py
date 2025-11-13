@@ -152,6 +152,7 @@ class GoogleDriveSyncState(Base):
     idx = Column(BigInteger, primary_key=True, autoincrement=True)
     data_source_idx = Column(BigInteger, nullable=False, unique=True)
     start_page_token = Column(String(255), nullable=True)
+    pending_page_token = Column(String(255), nullable=True)
     latest_history_id = Column(String(255), nullable=True)
     bootstrapped_at = Column(DateTime, nullable=True)
     last_synced = Column(DateTime, nullable=True)

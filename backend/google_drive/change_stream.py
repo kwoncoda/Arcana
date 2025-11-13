@@ -24,9 +24,9 @@ START_PAGE_TOKEN_ENDPOINT = f"{CHANGES_ENDPOINT}/startPageToken"
 
 _CHANGE_FIELDS = (
     "nextPageToken,newStartPageToken,"
-    "changes(fileId,removed,file("
+    "changes(fileId,removed,changeType,file("
     "id,name,mimeType,modifiedTime,md5Checksum,version,parents,"
-    "webViewLink,trashed,capabilities/canDownload))"
+    "webViewLink,trashed,capabilities/canDownload,shortcutDetails/targetId))"
 )
 
 _FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
@@ -40,13 +40,14 @@ class ChangeBatch:
     to_remove: List[str]
     skipped: List[Dict[str, str]]
     new_start_page_token: str
+    next_page_token: Optional[str]
 
 
 async def get_start_page_token(access_token: str) -> str:
     """Google Drive Changes API용 startPageToken을 조회한다."""
 
     headers = {"Authorization": f"Bearer {access_token}"}
-    params = {"supportsAllDrives": "false"}
+    params = {"supportsAllDrives": "true"}
 
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.get(
@@ -77,8 +78,9 @@ async def list_workspace_files(
             "nextPageToken, files(id, name, mimeType, modifiedTime, md5Checksum,"
             " version, webViewLink, parents, capabilities/canDownload)"
         ),
-        "supportsAllDrives": "false",
-        "includeItemsFromAllDrives": "false",
+        "supportsAllDrives": "true",
+        "includeItemsFromAllDrives": "true",
+        "spaces": "drive",
         "orderBy": "modifiedTime desc",
         "q": None,
     }
@@ -163,87 +165,96 @@ async def collect_workspace_changes(
 
     parents_cache: Dict[str, bool] = {}
 
+    next_page_token: Optional[str] = None
+
     async with httpx.AsyncClient(timeout=60) as client:
-        next_token: Optional[str] = page_token
-        while next_token:
-            params = {
-                "pageToken": next_token,
-                "pageSize": 200,
-                "fields": _CHANGE_FIELDS,
-                "includeItemsFromAllDrives": "false",
-                "supportsAllDrives": "false",
-                "restrictToMyDrive": "true",
-            }
+        params = {
+            "pageToken": page_token,
+            "pageSize": 200,
+            "fields": _CHANGE_FIELDS,
+            "includeItemsFromAllDrives": "true",
+            "supportsAllDrives": "true",
+            "restrictToMyDrive": "false",
+            "spaces": "drive",
+        }
 
-            response = await client.get(CHANGES_ENDPOINT, headers=headers, params=params)
-            if response.status_code != 200:
-                raise GoogleDriveAPIError(response.text)
+        response = await client.get(CHANGES_ENDPOINT, headers=headers, params=params)
+        if response.status_code != 200:
+            raise GoogleDriveAPIError(response.text)
 
-            payload = response.json()
-            new_start_page_token = payload.get("newStartPageToken") or new_start_page_token
+        payload = response.json()
+        new_start_page_token = payload.get("newStartPageToken") or new_start_page_token
+        next_page_token = payload.get("nextPageToken")
 
-            for change in payload.get("changes", []):
-                change_type = change.get("changeType")
-                if change_type and change_type != "file":
-                    continue
+        for change in payload.get("changes", []):
+            change_type = change.get("changeType")
+            if change_type and change_type != "file":
+                continue
 
-                file_id = change.get("fileId") or ""
-                if not file_id:
-                    continue
+            file_id = change.get("fileId") or ""
+            if not file_id:
+                continue
 
-                if change.get("removed"):
-                    _mark_removed(file_id, to_index, to_remove, skipped)
-                    continue
+            if change.get("removed"):
+                _mark_removed(file_id, to_index, to_remove, skipped)
+                continue
 
-                file = change.get("file") or {}
-                if file.get("trashed"):
-                    _mark_removed(file_id, to_index, to_remove, skipped)
-                    continue
+            file = change.get("file") or {}
+            if file.get("trashed"):
+                _mark_removed(file_id, to_index, to_remove, skipped)
+                continue
 
-                mime_type = file.get("mimeType") or ""
-                if mime_type == _FOLDER_MIME_TYPE:
-                    continue
+            file, file_id = await _resolve_change_file(
+                client, headers, file, file_id
+            )
 
-                if mime_type not in CONVERTIBLE_MIME_TYPES:
-                    skipped[file_id] = {
-                        "file_id": file_id,
-                        "name": file.get("name") or "",
-                        "mime_type": mime_type,
-                        "reason": "지원하지 않는 형식입니다.",
-                    }
-                    to_index.pop(file_id, None)
-                    to_remove.discard(file_id)
-                    continue
+            if file.get("trashed"):
+                _mark_removed(file_id, to_index, to_remove, skipped)
+                continue
 
-                capabilities = file.get("capabilities") or {}
-                if not capabilities.get("canDownload", True):
-                    skipped[file_id] = {
-                        "file_id": file_id,
-                        "name": file.get("name") or "",
-                        "mime_type": mime_type,
-                        "reason": "다운로드 권한이 없습니다.",
-                    }
-                    to_index.pop(file_id, None)
-                    to_remove.discard(file_id)
-                    continue
+            mime_type = file.get("mimeType") or ""
+            if mime_type == _FOLDER_MIME_TYPE:
+                continue
 
-                parents: Iterable[str] = file.get("parents") or []
-                if parents and await _is_within_workspace(
-                    client, headers, parents, root_id, parents_cache
-                ):
-                    to_remove.discard(file_id)
-                    skipped.pop(file_id, None)
-                    to_index[file_id] = file
-                else:
-                    _mark_removed(file_id, to_index, to_remove, skipped)
+            if mime_type not in CONVERTIBLE_MIME_TYPES:
+                skipped[file_id] = {
+                    "file_id": file_id,
+                    "name": file.get("name") or "",
+                    "mime_type": mime_type,
+                    "reason": "지원하지 않는 형식입니다.",
+                }
+                to_index.pop(file_id, None)
+                to_remove.discard(file_id)
+                continue
 
-            next_token = payload.get("nextPageToken")
+            capabilities = file.get("capabilities") or {}
+            if not capabilities.get("canDownload", True):
+                skipped[file_id] = {
+                    "file_id": file_id,
+                    "name": file.get("name") or "",
+                    "mime_type": mime_type,
+                    "reason": "다운로드 권한이 없습니다.",
+                }
+                to_index.pop(file_id, None)
+                to_remove.discard(file_id)
+                continue
+
+            parents: Iterable[str] = file.get("parents") or []
+            if parents and await _is_within_workspace(
+                client, headers, parents, root_id, parents_cache
+            ):
+                to_remove.discard(file_id)
+                skipped.pop(file_id, None)
+                to_index[file_id] = file
+            else:
+                _mark_removed(file_id, to_index, to_remove, skipped)
 
     return ChangeBatch(
         to_index=list(to_index.values()),
         to_remove=list(to_remove),
         skipped=list(skipped.values()),
         new_start_page_token=new_start_page_token,
+        next_page_token=next_page_token,
     )
 
 
@@ -273,12 +284,33 @@ def _build_folder_query(folder_id: str) -> str:
             None,
             [
                 "trashed=false",
-                "'me' in owners",
                 f"(({convertible_query}) or mimeType = '{_FOLDER_MIME_TYPE}')",
                 f"'{folder_id}' in parents",
             ],
         )
     )
+
+
+async def _resolve_change_file(
+    client: httpx.AsyncClient,
+    headers: Dict[str, str],
+    file: Dict[str, Any],
+    file_id: str,
+) -> Tuple[Dict[str, Any], str]:
+    """Changes API 이벤트에서 실제 파일 메타데이터를 조회한다."""
+
+    mime_type = file.get("mimeType")
+    if mime_type != "application/vnd.google-apps.shortcut":
+        return file, file_id
+
+    shortcut_details = file.get("shortcutDetails") or {}
+    target_id = shortcut_details.get("targetId")
+    if not target_id:
+        return file, file_id
+
+    metadata = await _fetch_drive_item_metadata(client, headers, target_id)
+    metadata.setdefault("id", target_id)
+    return metadata, target_id
 
 
 async def _is_within_workspace(
@@ -346,7 +378,33 @@ async def _fetch_folder_metadata(
     response = await client.get(
         f"{FILES_ENDPOINT}/{folder_id}",
         headers=headers,
-        params={"fields": "id, parents"},
+        params={
+            "fields": "id, parents",
+            "supportsAllDrives": "true",
+            "includeItemsFromAllDrives": "true",
+        },
+    )
+    if response.status_code != 200:
+        raise GoogleDriveAPIError(response.text)
+    return response.json()
+
+
+async def _fetch_drive_item_metadata(
+    client: httpx.AsyncClient,
+    headers: Dict[str, str],
+    file_id: str,
+) -> Dict[str, Any]:
+    response = await client.get(
+        f"{FILES_ENDPOINT}/{file_id}",
+        headers=headers,
+        params={
+            "fields": (
+                "id,name,mimeType,modifiedTime,md5Checksum,version,parents,"
+                "webViewLink,trashed,capabilities/canDownload"
+            ),
+            "supportsAllDrives": "true",
+            "includeItemsFromAllDrives": "true",
+        },
     )
     if response.status_code != 200:
         raise GoogleDriveAPIError(response.text)

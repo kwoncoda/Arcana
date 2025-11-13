@@ -345,6 +345,8 @@ async def pull_google_drive_files(
     if not sync_state.start_page_token:
         try:
             start_token = await get_start_page_token(credential.access_token)
+            sync_state.start_page_token = start_token
+            sync_state.pending_page_token = None
             raw_files, bootstrap_skipped = await list_workspace_files(
                 credential.access_token,
                 root_id=root_folder_id,
@@ -361,9 +363,17 @@ async def pull_google_drive_files(
         bootstrapped = True
     else:
         try:
+            page_token = (
+                sync_state.pending_page_token or sync_state.start_page_token
+            )
+            if not page_token:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Google Drive Changes API 토큰이 초기화되지 않았습니다.",
+                )
             change_batch: ChangeBatch = await collect_workspace_changes(
                 credential.access_token,
-                page_token=sync_state.start_page_token,
+                page_token=page_token,
                 root_id=root_folder_id,
             )
         except GoogleDriveAPIError as exc:
@@ -375,7 +385,14 @@ async def pull_google_drive_files(
         index_candidates = change_batch.to_index
         removed_file_ids = list(dict.fromkeys(change_batch.to_remove))
         skipped_files.extend(change_batch.skipped)
-        new_start_token = change_batch.new_start_page_token or sync_state.start_page_token
+        if change_batch.next_page_token:
+            new_start_token = sync_state.start_page_token
+            sync_state.pending_page_token = change_batch.next_page_token
+        else:
+            new_start_token = (
+                change_batch.new_start_page_token or sync_state.start_page_token
+            )
+            sync_state.pending_page_token = None
 
     candidate_ids = {meta.get("id") for meta in index_candidates if meta.get("id")}
     candidate_ids.update(removed_file_ids)
@@ -578,5 +595,6 @@ async def pull_google_drive_files(
         "last_synced_at": last_synced_at.isoformat() if last_synced_at else None,
         "synced_at": now.isoformat(),
         "start_page_token": new_start_token,
+        "pending_page_token": sync_state.pending_page_token,
         "bootstrapped": bootstrapped,
     }
