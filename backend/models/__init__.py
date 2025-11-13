@@ -9,6 +9,8 @@ from .entities import (
     User,
     NotionOauthCredentials,
     GoogleDriveOauthCredentials,
+    GoogleDriveFileSnapshot,
+    GoogleDriveSyncState,
     DataSource,
 )
 
@@ -26,6 +28,8 @@ __all__ = [
     "User",
     "NotionOauthCredentials",
     "GoogleDriveOauthCredentials",
+    "GoogleDriveFileSnapshot",
+    "GoogleDriveSyncState",
     "DataSource",
     "DEFAULT_RAG_INDEX_NAME",
 ]

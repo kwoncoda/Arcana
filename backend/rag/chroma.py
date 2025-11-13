@@ -240,6 +240,36 @@ class ChromaRAGService:
         self._invalidate_keyword_index(key)
         return len(docs)
 
+    def delete_documents(
+        self,
+        workspace_idx: int,
+        workspace_name: str,
+        page_ids: Sequence[str],
+        *,
+        storage_uri: Optional[str] = None,
+    ) -> int:
+        """특정 page_id에 해당하는 문서를 제거한다."""
+
+        if not page_ids:
+            return 0
+
+        store = self._get_vectorstore(
+            workspace_idx, workspace_name, storage_uri=storage_uri
+        )
+        removed = 0
+        for page_id in page_ids:
+            try:
+                store.delete(where={"page_id": page_id})
+                removed += 1
+            except Exception:  # pragma: no cover - 삭제 오류는 무시
+                continue
+
+        key = self._cache_key(
+            workspace_idx, workspace_name, storage_uri=storage_uri
+        )
+        self._invalidate_keyword_index(key)
+        return removed
+
     def collection_stats(
         self,
         workspace_idx: int,
