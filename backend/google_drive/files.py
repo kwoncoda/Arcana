@@ -31,6 +31,9 @@ _CONVERTIBLE_MIME_TYPES = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "text/plain",
+    "text/csv",
+    "application/pdf",
 }
 
 _GOOGLE_NATIVE_MIME_TYPES = {
@@ -39,11 +42,15 @@ _GOOGLE_NATIVE_MIME_TYPES = {
     "application/vnd.google-apps.presentation",
 }
 
-_OFFICE_TO_GOOGLE_MIME_MAP = {
+_CONVERT_TO_GOOGLE_MIME_MAP = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "application/vnd.google-apps.document",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "application/vnd.google-apps.spreadsheet",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation": "application/vnd.google-apps.presentation",
+    "text/plain": "application/vnd.google-apps.document",
+    "text/csv": "application/vnd.google-apps.spreadsheet",
 }
+
+_DIRECT_DOWNLOAD_MIME_TYPES = {"application/pdf"}
 
 _HWP_MIME_TYPES = {"application/x-hwp", "application/haansoft-hwp"}
 
@@ -271,8 +278,8 @@ async def _download_file_as_pdf(
 
     if mime_type in _GOOGLE_NATIVE_MIME_TYPES:
         logger.info("Google Drive 파일 '%s'을(를) PDF로 내보냅니다.", name)
-    elif mime_type in _OFFICE_TO_GOOGLE_MIME_MAP:
-        target_mime = _OFFICE_TO_GOOGLE_MIME_MAP[mime_type]
+    elif mime_type in _CONVERT_TO_GOOGLE_MIME_MAP:
+        target_mime = _CONVERT_TO_GOOGLE_MIME_MAP[mime_type]
         temporary_id = await _copy_file_as_google_type(
             client,
             file_id=file_id,
@@ -281,21 +288,34 @@ async def _download_file_as_pdf(
             original_name=name,
         )
         export_source_id = temporary_id
+    elif mime_type in _DIRECT_DOWNLOAD_MIME_TYPES:
+        logger.info("Google Drive PDF 파일 '%s'을(를) 직접 다운로드합니다.", name)
     else:
         raise UnsupportedGoogleDriveFile(
             f"지원하지 않는 Google Drive 파일 형식입니다: {mime_type}"
         )
 
     try:
-        response = await client.get(
-            f"{FILES_ENDPOINT}/{export_source_id}/export",
-            headers=headers,
-            params={
-                "mimeType": _PDF_EXPORT_MIME,
-                "supportsAllDrives": "true",
-                "includeItemsFromAllDrives": "true",
-            },
-        )
+        if mime_type in _DIRECT_DOWNLOAD_MIME_TYPES:
+            response = await client.get(
+                f"{FILES_ENDPOINT}/{export_source_id}",
+                headers=headers,
+                params={
+                    "alt": "media",
+                    "supportsAllDrives": "true",
+                    "includeItemsFromAllDrives": "true",
+                },
+            )
+        else:
+            response = await client.get(
+                f"{FILES_ENDPOINT}/{export_source_id}/export",
+                headers=headers,
+                params={
+                    "mimeType": _PDF_EXPORT_MIME,
+                    "supportsAllDrives": "true",
+                    "includeItemsFromAllDrives": "true",
+                },
+            )
         if response.status_code != 200:
             raise GoogleDriveAPIError(response.text)
         pdf_path = _write_pdf(download_dir, name, file_id, response.content)

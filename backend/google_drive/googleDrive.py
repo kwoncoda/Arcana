@@ -25,10 +25,23 @@ CONVERTIBLE_MIME_TYPES = [
     'application/vnd.google-apps.document',
     'application/vnd.google-apps.spreadsheet',
     'application/vnd.google-apps.presentation',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document', # docx
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', # xlsx
-    'application/vnd.openxmlformats-officedocument.presentationml.presentation' # pptx
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',  # docx
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',  # xlsx
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',  # pptx
+    'text/plain',  # txt
+    'text/csv',  # csv
+    'application/pdf',  # pdf
 ]
+
+_GOOGLE_CONVERSION_MAP = {
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'application/vnd.google-apps.document',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'application/vnd.google-apps.spreadsheet',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'application/vnd.google-apps.presentation',
+    'text/plain': 'application/vnd.google-apps.document',
+    'text/csv': 'application/vnd.google-apps.spreadsheet',
+}
+
+_DIRECT_DOWNLOAD_MIME_TYPES = {'application/pdf'}
 
 def _load_oauth_credential() -> Credentials:
     """DB에 저장된 OAuth 자격증명으로 Google API Credentials를 생성한다."""
@@ -141,36 +154,47 @@ def convert_file_to_pdf(service, file_to_convert):
     file_id_to_export = None
     
     try:
+        download_directly = False
         if 'google-apps' in mime_type:
             file_id_to_export = file_id
-        
-        elif 'openxmlformats-officedocument' in mime_type:
-            print(f"   (파일이 '{mime_type}'입니다. Google 문서로 임시 변환합니다...)")
-            
-            if 'wordprocessingml' in mime_type:
-                target_mime_type = 'application/vnd.google-apps.document'
-            else:
-                target_mime_type = 'application/vnd.google-apps.spreadsheet'
 
-            copy_metadata = {'name': f"[임시 변환] {file_name}", 'mimeType': target_mime_type}
-            copy_metadata['parents'] = ['root'] 
-            
+        elif mime_type in _GOOGLE_CONVERSION_MAP:
+            target_mime_type = _GOOGLE_CONVERSION_MAP[mime_type]
+            print(
+                f"   (파일이 '{mime_type}'입니다. Google 워크스페이스 형식으로 임시 변환합니다...)"
+            )
+
+            copy_metadata = {
+                'name': f"[임시 변환] {file_name}",
+                'mimeType': target_mime_type,
+                'parents': ['root'],
+            }
+
             temp_file = service.files().copy(fileId=file_id, body=copy_metadata).execute()
-            
+
             temporary_google_doc_id = temp_file.get('id')
             file_id_to_export = temporary_google_doc_id
-            
+
             print(f"   (임시 'Google 문서' 생성 완료. ID: {temporary_google_doc_id})")
-        
+
+        elif mime_type in _DIRECT_DOWNLOAD_MIME_TYPES:
+            print("   (PDF 파일은 그대로 다운로드합니다.)")
+            file_id_to_export = file_id
+            download_directly = True
+
         else:
-            # 지원하지 않는 파일 형식 
+            # 지원하지 않는 파일 형식
             return False
 
-        print("   PDF로 변환을 요청합니다 ")
-        request = service.files().export_media(
-            fileId=file_id_to_export,
-            mimeType='application/pdf'
-        )
+        if download_directly:
+            print("   PDF 파일을 다운로드합니다")
+            request = service.files().get_media(fileId=file_id_to_export)
+        else:
+            print("   PDF로 변환을 요청합니다 ")
+            request = service.files().export_media(
+                fileId=file_id_to_export,
+                mimeType='application/pdf'
+            )
         
         output_filename = f"{Path(file_name).stem}.pdf"
         fh = io.FileIO(output_filename, 'wb')
