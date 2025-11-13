@@ -195,31 +195,3 @@ def convert_file_to_pdf(service, file_to_convert):
                 service.files().delete(fileId=temporary_google_doc_id).execute()
             except HttpError as error:
                 print(f"   임시 파일 삭제 중 오류 발생: {error}")
-
-# 메인 
-if __name__ == '__main__':
-    service = authenticate()
-    if service:
-        files_to_process = get_all_convertible_files(service)
-        
-        if not files_to_process:
-            print("\n변환할 문서가 드라이브에 없습니다.")
-        else:
-            print(f"\n--- 총 {len(files_to_process)}개의 문서 변환을 시작합니다. ---")
-            
-            success_count = 0
-            fail_count = 0
-            
-            for i, file in enumerate(files_to_process):
-                print(f"\n--- 작업 ({i+1}/{len(files_to_process)}) ---")
-                if convert_file_to_pdf(service, file):
-                    success_count += 1
-                else:
-                    fail_count += 1
-                
-                print("   (API 제한을 피하기 위해 2초 대기...)")
-                time.sleep(2) 
-            
-            print(f"\n--- 모든 작업 완료! ---")
-            print(f"  성공: {success_count}개")
-            print(f"  실패: {fail_count}개")
