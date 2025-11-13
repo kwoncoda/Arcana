@@ -437,13 +437,35 @@ async def pull_google_drive_files(
         _apply_snapshot_metadata(snapshot, file_meta, synced_at=now, update_synced=True)
 
     removed_ids_clean: List[str] = []
+    removed_file_details: List[Dict[str, Optional[str]]] = []
     for file_id in removed_file_ids:
         if not file_id:
             continue
         removed_ids_clean.append(file_id)
         snapshot = snapshots.pop(file_id, None)
         if snapshot:
+            removed_file_details.append(
+                {
+                    "file_id": file_id,
+                    "name": snapshot.name,
+                    "mime_type": snapshot.mime_type,
+                    "modified_time": snapshot.modified_time.isoformat()
+                    if snapshot.modified_time
+                    else None,
+                    "web_view_link": snapshot.web_view_link,
+                }
+            )
             db.delete(snapshot)
+        else:
+            removed_file_details.append(
+                {
+                    "file_id": file_id,
+                    "name": None,
+                    "mime_type": None,
+                    "modified_time": None,
+                    "web_view_link": None,
+                }
+            )
 
     workspace_metadata = {
         "workspace_idx": workspace.idx,
@@ -549,7 +571,8 @@ async def pull_google_drive_files(
         "jsonl_records": records,
         "jsonl_text": jsonl_text,
         "skipped_files": skipped_files,
-        "removed_files": removed_ids_clean,
+        "removed_files": removed_file_details,
+        "removed_file_ids": removed_ids_clean,
         "ingested_chunks": ingested_count,
         "removed_pages": removed_pages,
         "last_synced_at": last_synced_at.isoformat() if last_synced_at else None,

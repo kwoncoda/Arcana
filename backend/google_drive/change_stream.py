@@ -24,9 +24,9 @@ START_PAGE_TOKEN_ENDPOINT = f"{CHANGES_ENDPOINT}/startPageToken"
 
 _CHANGE_FIELDS = (
     "nextPageToken,newStartPageToken,"
-    "changes(fileId,removed,changeType,time,file("
+    "changes(fileId,removed,file("
     "id,name,mimeType,modifiedTime,md5Checksum,version,parents,"
-    "webViewLink,trashed,capabilities/canDownload)))"
+    "webViewLink,trashed,capabilities/canDownload))"
 )
 
 _FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
@@ -318,6 +318,13 @@ async def _has_root_ancestor(
     visiting.add(folder_id)
     metadata = await _fetch_folder_metadata(client, headers, folder_id)
     parents = metadata.get("parents") or []
+
+    # My Drive 루트는 API 상 고정 ID("root")와 실제 ID가 다를 수 있으며
+    # 실제 루트 폴더는 부모가 없으므로 이 경우를 루트로 간주한다.
+    if root_id == "root" and not parents:
+        cache[folder_id] = True
+        visiting.discard(folder_id)
+        return True
     for parent in parents:
         if parent == root_id or await _has_root_ancestor(
             client, headers, parent, root_id, cache, visiting
