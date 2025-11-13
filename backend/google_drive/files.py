@@ -57,6 +57,11 @@ _PDF_EXPORT_MIME = "application/pdf"
 _FILENAME_SANITIZE_PATTERN = re.compile(r"[^\w .-]+", re.UNICODE)
 
 
+# 외부 모듈에서 사용할 수 있도록 공개 상수로 재노출한다.
+CONVERTIBLE_MIME_TYPES = frozenset(_CONVERTIBLE_MIME_TYPES)
+GOOGLE_NATIVE_MIME_TYPES = frozenset(_GOOGLE_NATIVE_MIME_TYPES)
+
+
 class GoogleDriveAPIError(RuntimeError):
     """Raised when the Google Drive API responds with an unexpected error."""
 
@@ -432,15 +437,23 @@ async def fetch_authorized_text_files(
     *,
     modified_after: Optional[datetime] = None,
     download_dir: Path,
+    files_override: Optional[Sequence[Dict[str, str]]] = None,
 ) -> Tuple[List[GoogleDriveFile], List[Dict[str, str]]]:
     async with httpx.AsyncClient(timeout=60) as client:
-        raw_files = await _list_files(
-            client, access_token=access_token, modified_after=modified_after
-        )
+        if files_override is not None:
+            raw_files = list(files_override)
+            logger.info(
+                "사전 계산된 Google Drive 파일 %d건에 대해 변환을 진행합니다.",
+                len(raw_files),
+            )
+        else:
+            raw_files = await _list_files(
+                client, access_token=access_token, modified_after=modified_after
+            )
 
-        logger.info(
-            "Google Drive에서 %d개의 변환 대상 파일을 찾았습니다.", len(raw_files)
-        )
+            logger.info(
+                "Google Drive에서 %d개의 변환 대상 파일을 찾았습니다.", len(raw_files)
+            )
 
         headers = {"Authorization": f"Bearer {access_token}"}
         converted: List[GoogleDriveFile] = []
