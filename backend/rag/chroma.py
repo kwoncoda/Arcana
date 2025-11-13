@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from uuid import uuid4
 
 from langchain_chroma import Chroma
@@ -269,6 +269,37 @@ class ChromaRAGService:
         )
         self._invalidate_keyword_index(key)
         return removed
+
+    def delete_where(
+        self,
+        workspace_idx: int,
+        workspace_name: str,
+        *,
+        storage_uri: Optional[str] = None,
+        where: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        """메타데이터 조건으로 문서를 제거한다."""
+
+        if not where:
+            return 0
+
+        store = self._get_vectorstore(
+            workspace_idx, workspace_name, storage_uri=storage_uri
+        )
+        key = self._cache_key(
+            workspace_idx, workspace_name, storage_uri=storage_uri
+        )
+        try:
+            result = store.delete(where=where)
+        except Exception as exc:  # pragma: no cover - 삭제 실패 방어
+            raise RuntimeError(f"Chroma 문서 삭제 실패: {exc}") from exc
+
+        self._invalidate_keyword_index(key)
+        if isinstance(result, dict):
+            ids = result.get("ids")
+            if isinstance(ids, list):
+                return len(ids)
+        return 0
 
     def collection_stats(
         self,
