@@ -164,6 +164,108 @@ async def notion_oauth_callback(
     return RedirectResponse(url=FRONT_MAIN_REDIRECT_URL)
 
 
+@router.post(
+    "/disconnect",
+    summary="Notion 연동 해제",
+)
+def disconnect_notion(
+    *,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """현재 워크스페이스에서 Notion 연동과 RAG 데이터를 제거한다."""
+
+    workspace = _resolve_workspace(db, user)
+    data_source = db.scalar(
+        select(DataSource).where(
+            DataSource.workspace_idx == workspace.idx,
+            DataSource.type == "notion",
+        )
+    )
+
+    if not data_source or data_source.status != "connected":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Notion 데이터 소스가 연결되어 있지 않습니다.",
+        )
+
+    rag_index = db.scalar(
+        select(RagIndex).where(
+            RagIndex.workspace_idx == workspace.idx,
+            RagIndex.name == DEFAULT_RAG_INDEX_NAME,
+        )
+    )
+
+    storage_path = ensure_workspace_storage(workspace.name)
+    storage_uri = rag_index.storage_uri if rag_index and rag_index.storage_uri else str(storage_path)
+
+    before_stats = rag_service.collection_stats(
+        workspace.idx,
+        workspace.name,
+        storage_uri=storage_uri,
+    )
+
+    try:
+        rag_service.delete_where(
+            workspace.idx,
+            workspace.name,
+            storage_uri=storage_uri,
+            where={"provider": "notion"},
+        )
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"RAG 문서를 정리하는 중 오류가 발생했습니다: {exc}",
+        ) from exc
+
+    after_stats = rag_service.collection_stats(
+        workspace.idx,
+        workspace.name,
+        storage_uri=storage_uri,
+    )
+
+    removed_vectors = max(0, before_stats.vector_count - after_stats.vector_count)
+    removed_pages = max(0, before_stats.page_count - after_stats.page_count)
+    now = datetime.now(timezone.utc)
+
+    if rag_index:
+        rag_index.object_count = after_stats.page_count
+        rag_index.vector_count = after_stats.vector_count
+        rag_index.status = "ready"
+        rag_index.updated = now
+        db.add(rag_index)
+
+    credentials = list(
+        db.scalars(
+            select(NotionOauthCredentials).where(
+                NotionOauthCredentials.data_source_idx == data_source.idx
+            )
+        )
+    )
+    for credential in credentials:
+        db.delete(credential)
+
+    data_source.status = "disconnected"
+    data_source.synced = None
+    db.add(data_source)
+
+    try:
+        db.commit()
+    except Exception as exc:  # pragma: no cover - 트랜잭션 방어
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Notion 연동을 해제하는 중 데이터베이스 오류가 발생했습니다.",
+        ) from exc
+
+    return {
+        "status": "disconnected",
+        "removed_pages": removed_pages,
+        "removed_vectors": removed_vectors,
+        "remaining_vectors": after_stats.vector_count,
+    }
+
+
 def _get_connected_credential(
     db: Session, *, user: User, workspace: Workspace
 ) -> NotionOauthCredentials:

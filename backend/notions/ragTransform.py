@@ -330,6 +330,7 @@ def build_documents_from_records(
                 "format": record.get("format", "markdown"),
                 "formatted_text": formatted_text,
                 "plain_text": plain_text,
+                "provider": "notion",
             }
         )
         document = Document(page_content=plain_text, metadata=metadata)

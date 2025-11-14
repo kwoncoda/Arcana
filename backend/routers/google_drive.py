@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from dependencies import get_current_user
@@ -53,6 +53,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
 import os
+import shutil
 FRONT_MAIN_REDIRECT_URL=os.getenv("FRONT_MAIN_REDIRECT_URL")
 
 router = APIRouter(prefix="/google-drive", tags=["google-drive"])
@@ -285,6 +286,127 @@ async def google_drive_oauth_callback(
 
     apply_oauth_tokens(db, credential, token_payload, user_info, mark_connected=True)
     return RedirectResponse(url=FRONT_MAIN_REDIRECT_URL)
+
+
+@router.post(
+    "/disconnect",
+    summary="Google Drive 연동 해제",
+)
+def disconnect_google_drive(
+    *,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """현재 워크스페이스에서 Google Drive 연동과 관련 데이터를 제거한다."""
+
+    workspace = _resolve_workspace(db, user)
+    data_source = db.scalar(
+        select(DataSource).where(
+            DataSource.workspace_idx == workspace.idx,
+            DataSource.type == "googledrive",
+        )
+    )
+
+    if not data_source or data_source.status != "connected":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Google Drive 데이터 소스가 연결되어 있지 않습니다.",
+        )
+
+    rag_index = db.scalar(
+        select(RagIndex).where(
+            RagIndex.workspace_idx == workspace.idx,
+            RagIndex.name == DEFAULT_RAG_INDEX_NAME,
+        )
+    )
+
+    storage_path = ensure_workspace_storage(workspace.name)
+    storage_uri = rag_index.storage_uri if rag_index and rag_index.storage_uri else str(storage_path)
+
+    before_stats = rag_service.collection_stats(
+        workspace.idx,
+        workspace.name,
+        storage_uri=storage_uri,
+    )
+
+    try:
+        rag_service.delete_where(
+            workspace.idx,
+            workspace.name,
+            storage_uri=storage_uri,
+            where={"provider": "googledrive"},
+        )
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"RAG 문서를 정리하는 중 오류가 발생했습니다: {exc}",
+        ) from exc
+
+    after_stats = rag_service.collection_stats(
+        workspace.idx,
+        workspace.name,
+        storage_uri=storage_uri,
+    )
+
+    removed_vectors = max(0, before_stats.vector_count - after_stats.vector_count)
+    removed_pages = max(0, before_stats.page_count - after_stats.page_count)
+    now = datetime.now(timezone.utc)
+
+    if rag_index:
+        rag_index.object_count = after_stats.page_count
+        rag_index.vector_count = after_stats.vector_count
+        rag_index.status = "ready"
+        rag_index.updated = now
+        db.add(rag_index)
+
+    drive_storage_dir = storage_path / "googledrive"
+    removed_files = 0
+    if drive_storage_dir.exists():
+        removed_files = sum(1 for path in drive_storage_dir.rglob("*") if path.is_file())
+        try:
+            shutil.rmtree(drive_storage_dir)
+        except OSError as exc:  # pragma: no cover - 파일 삭제 실패 방어
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Google Drive 저장 파일을 삭제하는 중 오류가 발생했습니다: {exc}",
+            ) from exc
+
+    db.execute(
+        delete(GoogleDriveFileSnapshot).where(
+            GoogleDriveFileSnapshot.data_source_idx == data_source.idx
+        )
+    )
+    db.execute(
+        delete(GoogleDriveSyncState).where(
+            GoogleDriveSyncState.data_source_idx == data_source.idx
+        )
+    )
+    db.execute(
+        delete(GoogleDriveOauthCredentials).where(
+            GoogleDriveOauthCredentials.data_source_idx == data_source.idx
+        )
+    )
+
+    data_source.status = "disconnected"
+    data_source.synced = None
+    db.add(data_source)
+
+    try:
+        db.commit()
+    except Exception as exc:  # pragma: no cover - 트랜잭션 방어
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Google Drive 연동을 해제하는 중 데이터베이스 오류가 발생했습니다.",
+        ) from exc
+
+    return {
+        "status": "disconnected",
+        "removed_pages": removed_pages,
+        "removed_vectors": removed_vectors,
+        "remaining_vectors": after_stats.vector_count,
+        "removed_files": removed_files,
+    }
 
 
 def get_connected_google_credential(
