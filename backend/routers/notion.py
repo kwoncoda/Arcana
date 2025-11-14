@@ -144,7 +144,6 @@ async def notion_oauth_callback(
     if not code or not state:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="code/state 누락")
 
-    # state 검증 → cred 식별
     try:
         cred_idx, _uid = verify_state(state)
     except ValueError as e:
@@ -163,6 +162,108 @@ async def notion_oauth_callback(
     cred = apply_oauth_tokens(db, cred, token_json, mark_connected=True)
 
     return RedirectResponse(url=FRONT_MAIN_REDIRECT_URL)
+
+
+@router.post(
+    "/disconnect",
+    summary="Notion 연동 해제",
+)
+def disconnect_notion(
+    *,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """현재 워크스페이스에서 Notion 연동과 RAG 데이터를 제거한다."""
+
+    workspace = _resolve_workspace(db, user)
+    data_source = db.scalar(
+        select(DataSource).where(
+            DataSource.workspace_idx == workspace.idx,
+            DataSource.type == "notion",
+        )
+    )
+
+    if not data_source or data_source.status != "connected":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Notion 데이터 소스가 연결되어 있지 않습니다.",
+        )
+
+    rag_index = db.scalar(
+        select(RagIndex).where(
+            RagIndex.workspace_idx == workspace.idx,
+            RagIndex.name == DEFAULT_RAG_INDEX_NAME,
+        )
+    )
+
+    storage_path = ensure_workspace_storage(workspace.name)
+    storage_uri = rag_index.storage_uri if rag_index and rag_index.storage_uri else str(storage_path)
+
+    before_stats = rag_service.collection_stats(
+        workspace.idx,
+        workspace.name,
+        storage_uri=storage_uri,
+    )
+
+    try:
+        rag_service.delete_where(
+            workspace.idx,
+            workspace.name,
+            storage_uri=storage_uri,
+            where={"provider": "notion"},
+        )
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"RAG 문서를 정리하는 중 오류가 발생했습니다: {exc}",
+        ) from exc
+
+    after_stats = rag_service.collection_stats(
+        workspace.idx,
+        workspace.name,
+        storage_uri=storage_uri,
+    )
+
+    removed_vectors = max(0, before_stats.vector_count - after_stats.vector_count)
+    removed_pages = max(0, before_stats.page_count - after_stats.page_count)
+    now = datetime.now(timezone.utc)
+
+    if rag_index:
+        rag_index.object_count = after_stats.page_count
+        rag_index.vector_count = after_stats.vector_count
+        rag_index.status = "ready"
+        rag_index.updated = now
+        db.add(rag_index)
+
+    credentials = list(
+        db.scalars(
+            select(NotionOauthCredentials).where(
+                NotionOauthCredentials.data_source_idx == data_source.idx
+            )
+        )
+    )
+    for credential in credentials:
+        db.delete(credential)
+
+    data_source.status = "disconnected"
+    data_source.synced = None
+    db.add(data_source)
+
+    try:
+        db.commit()
+    except Exception as exc:  # pragma: no cover - 트랜잭션 방어
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Notion 연동을 해제하는 중 데이터베이스 오류가 발생했습니다.",
+        ) from exc
+
+    return {
+        "status": "disconnected",
+        "removed_pages": removed_pages,
+        "removed_vectors": removed_vectors,
+        "remaining_vectors": after_stats.vector_count,
+    }
 
 
 def _get_connected_credential(
@@ -193,13 +294,20 @@ async def pull_all_pages(
     workspace = _resolve_workspace(db, user)
     credential = _get_connected_credential(db, user=user, workspace=workspace)
 
+    data_source = db.scalar(
+        select(DataSource).where(
+            DataSource.workspace_idx == workspace.idx,
+            DataSource.type == "notion",
+        )
+    )
+
     rag_index = db.scalar(
         select(RagIndex).where(
             RagIndex.workspace_idx == workspace.idx,
             RagIndex.name == DEFAULT_RAG_INDEX_NAME,
         )
     )
-    last_synced_at = rag_index.updated if rag_index else None
+    last_synced_at = data_source.synced if data_source else None
 
     try:
         payload = await pull_all_shared_page_text(
@@ -220,10 +328,10 @@ async def pull_all_pages(
             detail=f"Notion 데이터 수집 중 오류가 발생했습니다: {exc}",
         ) from exc
         
-    workspace_metadata = {  # 워크스페이스 정보를 문서 메타데이터로 포함하기 위한 딕셔너리 생성 주석
-        "workspace_idx": workspace.idx,  # 워크스페이스 고유 식별자 저장 주석
-        "workspace_type": workspace.type,  # 워크스페이스 유형 저장 주석
-        "workspace_name": workspace.name,  # 워크스페이스 이름 저장 주석
+    workspace_metadata = { 
+        "workspace_idx": workspace.idx,
+        "workspace_type": workspace.type,
+        "workspace_name": workspace.name,
     }
     jsonl_records = build_jsonl_records_from_pages(payload.get("pages", []))  # 수집된 페이지를 JSONL 레코드로 전처리하는 주석
     documents = build_documents_from_records(jsonl_records, workspace_metadata)  # 전처리된 레코드를 LangChain 문서로 변환하는 주석
@@ -272,10 +380,15 @@ async def pull_all_pages(
         workspace.name,
         storage_uri=rag_index.storage_uri,
     )
+    now = datetime.now(timezone.utc)
     rag_index.object_count = stats.page_count
     rag_index.vector_count = stats.vector_count
     rag_index.status = "ready"
-    rag_index.updated = datetime.now(timezone.utc)
+    rag_index.updated = now
+
+    if data_source:
+        data_source.synced = now
+        db.add(data_source)
 
     try:
         db.commit()
@@ -286,10 +399,10 @@ async def pull_all_pages(
             detail="RAG 인덱스 메타데이터를 갱신하는 중 오류가 발생했습니다.",
         ) from exc
 
-    return {  # API 응답 페이로드를 구성하는 주석
+    return {
         **payload,  # 원본 Notion 수집 결과를 포함하는 주석
-        "jsonl_records": jsonl_records,  # 전처리된 JSONL 레코드 리스트를 포함하는 주석
-        "jsonl_text": jsonl_text,  # 직렬화된 JSONL 문자열을 포함하는 주석
-        "ingested_chunks": ingested_count,  # Chroma에 적재된 청크 수를 포함하는 주석
-        "last_synced_at": last_synced_at.isoformat() if last_synced_at else None,  # 직전 동기화 기준 시각 주석
+        "jsonl_records": jsonl_records,
+        "jsonl_text": jsonl_text, 
+        "ingested_chunks": ingested_count,  # Chroma에 적재된 청크 수를 포함
+        "last_synced_at": last_synced_at.isoformat() if last_synced_at else None,
     }

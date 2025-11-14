@@ -5,7 +5,18 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import BigInteger, Column, DateTime, String, Boolean, Text, JSON, Integer, text
+from sqlalchemy import (
+    BigInteger,
+    Column,
+    DateTime,
+    String,
+    Boolean,
+    Text,
+    JSON,
+    Integer,
+    UniqueConstraint,
+    text,
+)
 
 from utils.db import Base
 
@@ -131,3 +142,42 @@ class GoogleDriveOauthCredentials(Base):
     created = Column(DateTime, nullable=False, default=lambda: datetime.utcnow())
     updated = Column(DateTime, nullable=False, default=lambda: datetime.utcnow())
     provider_payload = Column(JSON, nullable=True)
+
+
+class GoogleDriveSyncState(Base):
+    """Google Drive Changes API 증분 동기화 상태."""
+
+    __tablename__ = "google_drive_sync_state"
+
+    idx = Column(BigInteger, primary_key=True, autoincrement=True)
+    data_source_idx = Column(BigInteger, nullable=False, unique=True)
+    start_page_token = Column(String(255), nullable=True)
+    pending_page_token = Column(String(255), nullable=True)
+    latest_history_id = Column(String(255), nullable=True)
+    bootstrapped_at = Column(DateTime, nullable=True)
+    last_synced = Column(DateTime, nullable=True)
+    created = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class GoogleDriveFileSnapshot(Base):
+    """Google Drive에서 인덱싱한 파일 스냅샷."""
+
+    __tablename__ = "google_drive_file_snapshots"
+
+    idx = Column(BigInteger, primary_key=True, autoincrement=True)
+    data_source_idx = Column(BigInteger, nullable=False)
+    file_id = Column(String(128), nullable=False)
+    name = Column(String(1024), nullable=True)
+    mime_type = Column(String(255), nullable=False)
+    md5_checksum = Column(String(128), nullable=True)
+    version = Column(BigInteger, nullable=True)
+    modified_time = Column(DateTime, nullable=True)
+    web_view_link = Column(String(1024), nullable=True)
+    last_synced = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("data_source_idx", "file_id", name="uk_google_drive_file"),
+    )

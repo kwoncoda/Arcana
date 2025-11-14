@@ -130,7 +130,40 @@ CREATE TABLE google_drive_oauth_credentials (
   CONSTRAINT fk_google_cred_ds   FOREIGN KEY (data_source_idx) REFERENCES data_sources(idx)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='구글 드라이브 OAuth 토큰/메타(비밀 값)';
 
--- 8) 노션 동기화 상태(증분/커서만 저장; 컨텐츠는 저장 안 함)
+-- 8) 구글 드라이브 Changes API 동기화 상태
+CREATE TABLE google_drive_sync_state (
+  idx               BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '동기화 상태 PK',
+  data_source_idx   BIGINT NOT NULL UNIQUE            COMMENT 'Google Drive 데이터 소스 FK',
+  start_page_token  VARCHAR(255) NULL                 COMMENT 'Changes API startPageToken',
+  pending_page_token VARCHAR(255) NULL                COMMENT 'Changes API nextPageToken pagination cursor',
+  latest_history_id VARCHAR(255) NULL                 COMMENT '마지막 historyId(미사용 가능)',
+  bootstrapped_at   DATETIME NULL                     COMMENT '최초 전체 스캔 완료 시각',
+  last_synced       DATETIME NULL                     COMMENT '마지막 증분 동기화 시각',
+  created           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '레코드 생성 시각',
+  updated           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '레코드 갱신 시각',
+  CONSTRAINT fk_google_sync_ds FOREIGN KEY (data_source_idx) REFERENCES data_sources(idx)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='구글 드라이브 증분 동기화 상태 저장';
+
+-- 9) 구글 드라이브 파일 스냅샷(변환 기준)
+CREATE TABLE google_drive_file_snapshots (
+  idx            BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '파일 스냅샷 PK',
+  data_source_idx BIGINT NOT NULL                 COMMENT 'Google Drive 데이터 소스 FK',
+  file_id        VARCHAR(128) NOT NULL            COMMENT 'Google Drive 파일 ID',
+  name           VARCHAR(1024) NULL               COMMENT '파일 이름',
+  mime_type      VARCHAR(255) NOT NULL            COMMENT 'MIME 타입',
+  md5_checksum   VARCHAR(128) NULL                COMMENT '바이너리 체크섬',
+  version        BIGINT NULL                      COMMENT 'Google Workspace 파일 버전',
+  modified_time  DATETIME NULL                    COMMENT '마지막 수정 시각',
+  web_view_link  VARCHAR(1024) NULL               COMMENT '웹 링크',
+  last_synced    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '마지막 인덱싱 시각',
+  created        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '레코드 생성 시각',
+  updated        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '레코드 갱신 시각',
+  UNIQUE KEY uk_google_drive_file (data_source_idx, file_id),
+  KEY idx_google_drive_file_ds (data_source_idx),
+  CONSTRAINT fk_google_drive_file_ds FOREIGN KEY (data_source_idx) REFERENCES data_sources(idx)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='구글 드라이브 파일 콘텐츠 스냅샷';
+
+-- 10) 노션 동기화 상태(증분/커서만 저장; 컨텐츠는 저장 안 함)
 CREATE TABLE notion_data_source_sync_state (
   idx                 BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '동기화 상태 PK',
   data_source_idx     BIGINT NOT NULL UNIQUE            COMMENT '대상 데이터 소스 FK(1:1)',
