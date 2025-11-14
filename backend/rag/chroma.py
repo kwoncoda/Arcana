@@ -270,6 +270,38 @@ class ChromaRAGService:
         self._invalidate_keyword_index(key)
         return removed
 
+    def _match_metadata(self, metadata: Dict[str, Any], where: Dict[str, Any]) -> bool:
+        """주어진 where 조건을 단순 키-값 비교로 평가한다."""
+
+        for key, value in where.items():
+            if isinstance(value, dict) and "$eq" in value:
+                expected = value["$eq"]
+            else:
+                expected = value
+
+            if metadata.get(key) != expected:
+                return False
+        return True
+
+    def _collect_ids_by_metadata(
+        self, store: Chroma, where: Dict[str, Any]
+    ) -> List[str]:
+        """메타데이터 조건에 해당하는 문서 ID 목록을 수집한다."""
+
+        raw = store.get(include=["metadatas"])
+        ids = raw.get("ids") or []
+        metadatas = raw.get("metadatas") or []
+        matches: List[str] = []
+        for index, metadata in enumerate(metadatas):
+            if not isinstance(metadata, dict):
+                continue
+            if self._match_metadata(metadata, where):
+                try:
+                    matches.append(str(ids[index]))
+                except IndexError:  # pragma: no cover - 방어적 코드
+                    continue
+        return matches
+
     def delete_where(
         self,
         workspace_idx: int,
@@ -291,8 +323,19 @@ class ChromaRAGService:
         )
         try:
             result = store.delete(where=where)
-        except Exception as exc:  # pragma: no cover - 삭제 실패 방어
-            raise RuntimeError(f"Chroma 문서 삭제 실패: {exc}") from exc
+        except Exception as exc:
+            matches = self._collect_ids_by_metadata(store, where)
+            if not matches:
+                self._invalidate_keyword_index(key)
+                return 0
+            try:
+                store.delete(ids=matches)
+            except Exception as fallback_exc:  # pragma: no cover - 삭제 실패 방어
+                raise RuntimeError(
+                    f"Chroma 문서 삭제 실패: {fallback_exc}"
+                ) from fallback_exc
+            self._invalidate_keyword_index(key)
+            return len(matches)
 
         self._invalidate_keyword_index(key)
         if isinstance(result, dict):
