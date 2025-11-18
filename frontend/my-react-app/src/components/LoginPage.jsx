@@ -209,14 +209,19 @@ function LoginPage() {
     try {
       const response = await axios.post(apiUrl, { id, password });
       
-      const { access_token, refresh_token } = response.data;
+      // 3. 닉네임 받아오기
+      const { access_token, refresh_token, nickname } = response.data;
       console.log('Login Success:', response.data);
 
-      // 3. 토큰을 localStorage에 저장
+      // 4. 토큰을 localStorage에 저장
       localStorage.setItem('accessToken', access_token);
       localStorage.setItem('refreshToken', refresh_token);
+      // 5. 닉네임 저장
+      if (nickname) {
+        localStorage.setItem('userNickname', nickname);
+      }
 
-      // 4. 대시보드로 이동
+      // 6. 대시보드로 이동
       navigate('/dashboard');
 
     } catch (err) {
@@ -267,7 +272,7 @@ function LoginPage() {
         </Button>
       </Form>
 
-      {/* 5. SignUpLink를 Link 컴포넌트로 사용 */}
+      {/* 7. SignUpLink를 Link 컴포넌트로 사용 */}
       <SignUpLink to="/register">
         아직 계정이 없으신가요? 회원가입하러 가기
       </SignUpLink>
@@ -288,4 +293,3 @@ function LoginPage() {
 }
 
 export default LoginPage;
-
