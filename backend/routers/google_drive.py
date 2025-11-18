@@ -4,14 +4,16 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from dependencies import get_current_user
 from models import (
     DEFAULT_RAG_INDEX_NAME,
     DataSource,
+    GoogleDriveFileSnapshot,
     GoogleDriveOauthCredentials,
+    GoogleDriveSyncState,
     RagIndex,
     User,
     Workspace,
@@ -30,9 +32,15 @@ from google_drive import (
     make_state,
     verify_state,
 )
-
+from google_drive.change_stream import (
+    ChangeBatch,
+    collect_workspace_changes,
+    get_start_page_token,
+    list_workspace_files,
+)
 from google_drive.files import (
     GoogleDriveAPIError,
+    GoogleDriveFile,
     build_documents_from_records,
     build_records_from_files,
     fetch_authorized_text_files,
@@ -42,13 +50,134 @@ from rag.chroma import ChromaRAGService
 
 import json
 from datetime import datetime, timezone
-
+from typing import Any, Dict, Iterable, List, Optional
 
 import os
+import shutil
 FRONT_MAIN_REDIRECT_URL=os.getenv("FRONT_MAIN_REDIRECT_URL")
 
 router = APIRouter(prefix="/google-drive", tags=["google-drive"])
 rag_service = ChromaRAGService()
+
+
+def _resolve_root_folder_id(credential: GoogleDriveOauthCredentials) -> str:
+    """워크스페이스로 지정된 Google Drive 루트 폴더 ID를 반환한다."""
+
+    payload: Any = credential.provider_payload or {}
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            payload = {}
+
+    if isinstance(payload, dict):
+        root_id = (
+            payload.get("workspace_root_id")
+            or payload.get("root_folder_id")
+            or payload.get("selected_folder_id")
+        )
+    else:
+        root_id = None
+
+    return str(root_id) if root_id else "root"
+
+
+def _parse_google_datetime(value: Optional[str]) -> Optional[datetime]:
+    """Google ISO8601 문자열을 UTC datetime으로 변환한다."""
+
+    if not value:
+        return None
+
+    try:
+        normalized = value.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _safe_int(value: Any) -> Optional[int]:
+    """정수 변환 실패 시 None을 반환한다."""
+
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _should_reindex(
+    metadata: Dict[str, Any], snapshot: Optional[GoogleDriveFileSnapshot]
+) -> bool:
+    """파일 메타데이터 변화로 재색인 필요 여부를 판단한다."""
+
+    if snapshot is None:
+        return True
+
+    checksum = metadata.get("md5Checksum") or None
+    version = _safe_int(metadata.get("version"))
+    modified_time = _parse_google_datetime(metadata.get("modifiedTime"))
+
+    if checksum:
+        return snapshot.md5_checksum != checksum
+
+    if version is not None:
+        if snapshot.version is None:
+            return True
+        return snapshot.version != version
+
+    if snapshot.version is not None:
+        return True
+
+    if not modified_time:
+        return False
+
+    if snapshot.modified_time is None:
+        return True
+
+    return snapshot.modified_time != modified_time
+
+
+def _apply_snapshot_metadata(
+    snapshot: GoogleDriveFileSnapshot,
+    metadata: Dict[str, Any],
+    *,
+    synced_at: datetime,
+    update_synced: bool,
+) -> None:
+    """스냅샷 레코드에 최신 메타데이터를 반영한다."""
+
+    snapshot.name = metadata.get("name") or snapshot.name
+    mime_type = metadata.get("mimeType") or snapshot.mime_type
+    snapshot.mime_type = mime_type
+    snapshot.md5_checksum = metadata.get("md5Checksum") or None
+    snapshot.version = _safe_int(metadata.get("version"))
+    snapshot.modified_time = _parse_google_datetime(metadata.get("modifiedTime"))
+    snapshot.web_view_link = metadata.get("webViewLink") or snapshot.web_view_link
+    if update_synced:
+        snapshot.last_synced = synced_at
+    snapshot.updated = synced_at
+
+
+def _ensure_sync_state(db: Session, data_source: DataSource) -> GoogleDriveSyncState:
+    """Google Drive 동기화 상태 레코드를 조회하거나 생성한다."""
+
+    sync_state = db.scalar(
+        select(GoogleDriveSyncState).where(
+            GoogleDriveSyncState.data_source_idx == data_source.idx
+        )
+    )
+
+    if sync_state:
+        return sync_state
+
+    sync_state = GoogleDriveSyncState(data_source_idx=data_source.idx)
+    db.add(sync_state)
+    db.commit()
+    db.refresh(sync_state)
+    return sync_state
 
 
 def _resolve_workspace(db: Session, user: User) -> Workspace:
@@ -159,6 +288,127 @@ async def google_drive_oauth_callback(
     return RedirectResponse(url=FRONT_MAIN_REDIRECT_URL)
 
 
+@router.post(
+    "/disconnect",
+    summary="Google Drive 연동 해제",
+)
+def disconnect_google_drive(
+    *,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """현재 워크스페이스에서 Google Drive 연동과 관련 데이터를 제거한다."""
+
+    workspace = _resolve_workspace(db, user)
+    data_source = db.scalar(
+        select(DataSource).where(
+            DataSource.workspace_idx == workspace.idx,
+            DataSource.type == "googledrive",
+        )
+    )
+
+    if not data_source or data_source.status != "connected":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Google Drive 데이터 소스가 연결되어 있지 않습니다.",
+        )
+
+    rag_index = db.scalar(
+        select(RagIndex).where(
+            RagIndex.workspace_idx == workspace.idx,
+            RagIndex.name == DEFAULT_RAG_INDEX_NAME,
+        )
+    )
+
+    storage_path = ensure_workspace_storage(workspace.name)
+    storage_uri = rag_index.storage_uri if rag_index and rag_index.storage_uri else str(storage_path)
+
+    before_stats = rag_service.collection_stats(
+        workspace.idx,
+        workspace.name,
+        storage_uri=storage_uri,
+    )
+
+    try:
+        rag_service.delete_where(
+            workspace.idx,
+            workspace.name,
+            storage_uri=storage_uri,
+            where={"provider": "googledrive"},
+        )
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"RAG 문서를 정리하는 중 오류가 발생했습니다: {exc}",
+        ) from exc
+
+    after_stats = rag_service.collection_stats(
+        workspace.idx,
+        workspace.name,
+        storage_uri=storage_uri,
+    )
+
+    removed_vectors = max(0, before_stats.vector_count - after_stats.vector_count)
+    removed_pages = max(0, before_stats.page_count - after_stats.page_count)
+    now = datetime.now(timezone.utc)
+
+    if rag_index:
+        rag_index.object_count = after_stats.page_count
+        rag_index.vector_count = after_stats.vector_count
+        rag_index.status = "ready"
+        rag_index.updated = now
+        db.add(rag_index)
+
+    drive_storage_dir = storage_path / "googledrive"
+    removed_files = 0
+    if drive_storage_dir.exists():
+        removed_files = sum(1 for path in drive_storage_dir.rglob("*") if path.is_file())
+        try:
+            shutil.rmtree(drive_storage_dir)
+        except OSError as exc:  # pragma: no cover - 파일 삭제 실패 방어
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Google Drive 저장 파일을 삭제하는 중 오류가 발생했습니다: {exc}",
+            ) from exc
+
+    db.execute(
+        delete(GoogleDriveFileSnapshot).where(
+            GoogleDriveFileSnapshot.data_source_idx == data_source.idx
+        )
+    )
+    db.execute(
+        delete(GoogleDriveSyncState).where(
+            GoogleDriveSyncState.data_source_idx == data_source.idx
+        )
+    )
+    db.execute(
+        delete(GoogleDriveOauthCredentials).where(
+            GoogleDriveOauthCredentials.data_source_idx == data_source.idx
+        )
+    )
+
+    data_source.status = "disconnected"
+    data_source.synced = None
+    db.add(data_source)
+
+    try:
+        db.commit()
+    except Exception as exc:  # pragma: no cover - 트랜잭션 방어
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Google Drive 연동을 해제하는 중 데이터베이스 오류가 발생했습니다.",
+        ) from exc
+
+    return {
+        "status": "disconnected",
+        "removed_pages": removed_pages,
+        "removed_vectors": removed_vectors,
+        "remaining_vectors": after_stats.vector_count,
+        "removed_files": removed_files,
+    }
+
+
 def get_connected_google_credential(
     db: Session, *, user: User, workspace: Workspace
 ) -> GoogleDriveOauthCredentials:
@@ -195,18 +445,166 @@ async def pull_google_drive_files(
             DataSource.type == "googledrive",
         )
     )
-    last_synced_at = data_source.synced if data_source else None
-
-    try:
-        files, skipped = await fetch_authorized_text_files(
-            credential.access_token,
-            modified_after=last_synced_at,
-        )
-    except GoogleDriveAPIError as exc:
+    if not data_source:
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Google Drive API 오류: {exc}",
-        ) from exc
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Google Drive 데이터 소스를 찾을 수 없습니다.",
+        )
+
+    sync_state = _ensure_sync_state(db, data_source)
+    last_synced_at = data_source.synced
+
+    storage_path = ensure_workspace_storage(workspace.name)
+    pdf_download_dir = storage_path / "googledrive" / "pdf"
+    root_folder_id = _resolve_root_folder_id(credential)
+
+    now = datetime.now(timezone.utc)
+    bootstrapped = False
+    skipped_files: List[Dict[str, str]] = []
+    removed_file_ids: List[str] = []
+    index_candidates: List[Dict[str, Any]] = []
+
+    if not sync_state.start_page_token:
+        try:
+            start_token = await get_start_page_token(credential.access_token)
+            sync_state.start_page_token = start_token
+            sync_state.pending_page_token = None
+            raw_files, bootstrap_skipped = await list_workspace_files(
+                credential.access_token,
+                root_id=root_folder_id,
+            )
+        except GoogleDriveAPIError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Google Drive API 오류: {exc}",
+            ) from exc
+
+        skipped_files.extend(bootstrap_skipped)
+        index_candidates = raw_files
+        new_start_token = start_token
+        bootstrapped = True
+    else:
+        try:
+            page_token = (
+                sync_state.pending_page_token or sync_state.start_page_token
+            )
+            if not page_token:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Google Drive Changes API 토큰이 초기화되지 않았습니다.",
+                )
+            change_batch: ChangeBatch = await collect_workspace_changes(
+                credential.access_token,
+                page_token=page_token,
+                root_id=root_folder_id,
+            )
+        except GoogleDriveAPIError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Google Drive Changes API 오류: {exc}",
+            ) from exc
+
+        index_candidates = change_batch.to_index
+        removed_file_ids = list(dict.fromkeys(change_batch.to_remove))
+        skipped_files.extend(change_batch.skipped)
+        if change_batch.next_page_token:
+            new_start_token = sync_state.start_page_token
+            sync_state.pending_page_token = change_batch.next_page_token
+        else:
+            new_start_token = (
+                change_batch.new_start_page_token or sync_state.start_page_token
+            )
+            sync_state.pending_page_token = None
+
+    candidate_ids = {meta.get("id") for meta in index_candidates if meta.get("id")}
+    candidate_ids.update(removed_file_ids)
+    candidate_ids.discard(None)
+
+    snapshots: Dict[str, GoogleDriveFileSnapshot] = {}
+    if candidate_ids:
+        snapshot_rows = db.scalars(
+            select(GoogleDriveFileSnapshot).where(
+                GoogleDriveFileSnapshot.data_source_idx == data_source.idx,
+                GoogleDriveFileSnapshot.file_id.in_(candidate_ids),
+            )
+        ).all()
+        snapshots = {row.file_id: row for row in snapshot_rows}
+
+    files_to_convert: List[Dict[str, Any]] = []
+    for metadata in index_candidates:
+        file_id = metadata.get("id")
+        if not file_id:
+            continue
+        snapshot = snapshots.get(file_id)
+        if _should_reindex(metadata, snapshot):
+            files_to_convert.append(metadata)
+        elif snapshot:
+            _apply_snapshot_metadata(snapshot, metadata, synced_at=now, update_synced=False)
+
+    converted_files: List[GoogleDriveFile] = []
+    conversion_skipped: List[Dict[str, str]] = []
+    if files_to_convert:
+        try:
+            converted_files, conversion_skipped = await fetch_authorized_text_files(
+                credential.access_token,
+                download_dir=pdf_download_dir,
+                files_override=files_to_convert,
+            )
+        except GoogleDriveAPIError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Google Drive 파일 변환 오류: {exc}",
+            ) from exc
+
+    skipped_files.extend(conversion_skipped)
+
+    meta_by_id = {metadata.get("id"): metadata for metadata in index_candidates if metadata.get("id")}
+
+    for file in converted_files:
+        file_meta = meta_by_id.get(file.file_id)
+        if not file_meta:
+            continue
+        snapshot = snapshots.get(file.file_id)
+        if not snapshot:
+            snapshot = GoogleDriveFileSnapshot(
+                data_source_idx=data_source.idx,
+                file_id=file.file_id,
+                mime_type=file.mime_type,
+            )
+            db.add(snapshot)
+            snapshots[file.file_id] = snapshot
+        _apply_snapshot_metadata(snapshot, file_meta, synced_at=now, update_synced=True)
+
+    removed_ids_clean: List[str] = []
+    removed_file_details: List[Dict[str, Optional[str]]] = []
+    for file_id in removed_file_ids:
+        if not file_id:
+            continue
+        removed_ids_clean.append(file_id)
+        snapshot = snapshots.pop(file_id, None)
+        if snapshot:
+            removed_file_details.append(
+                {
+                    "file_id": file_id,
+                    "name": snapshot.name,
+                    "mime_type": snapshot.mime_type,
+                    "modified_time": snapshot.modified_time.isoformat()
+                    if snapshot.modified_time
+                    else None,
+                    "web_view_link": snapshot.web_view_link,
+                }
+            )
+            db.delete(snapshot)
+        else:
+            removed_file_details.append(
+                {
+                    "file_id": file_id,
+                    "name": None,
+                    "mime_type": None,
+                    "modified_time": None,
+                    "web_view_link": None,
+                }
+            )
 
     workspace_metadata = {
         "workspace_idx": workspace.idx,
@@ -215,13 +613,12 @@ async def pull_google_drive_files(
         "provider": "googledrive",
     }
 
-    records = build_records_from_files(files)
+    records = build_records_from_files(converted_files)
     documents = build_documents_from_records(records, workspace_metadata)
 
     jsonl_lines = [json.dumps(record, ensure_ascii=False) for record in records]
     jsonl_text = "\n".join(jsonl_lines)
 
-    storage_path = ensure_workspace_storage(workspace.name)
     rag_index = db.scalar(
         select(RagIndex).where(
             RagIndex.workspace_idx == workspace.idx,
@@ -230,6 +627,15 @@ async def pull_google_drive_files(
     )
 
     storage_uri = rag_index.storage_uri if rag_index and rag_index.storage_uri else str(storage_path)
+
+    removed_pages = 0
+    if removed_ids_clean:
+        removed_pages = rag_service.delete_documents(
+            workspace.idx,
+            workspace.name,
+            removed_ids_clean,
+            storage_uri=storage_uri,
+        )
 
     try:
         if documents:
@@ -265,15 +671,19 @@ async def pull_google_drive_files(
         workspace.name,
         storage_uri=rag_index.storage_uri,
     )
-    now = datetime.now(timezone.utc)
     rag_index.object_count = stats.page_count
     rag_index.vector_count = stats.vector_count
     rag_index.status = "ready"
     rag_index.updated = now
 
-    if data_source:
-        data_source.synced = now
-        db.add(data_source)
+    data_source.synced = now
+    db.add(data_source)
+
+    sync_state.start_page_token = new_start_token
+    sync_state.last_synced = now
+    if bootstrapped:
+        sync_state.bootstrapped_at = now
+    db.add(sync_state)
 
     try:
         db.commit()
@@ -292,14 +702,21 @@ async def pull_google_drive_files(
                 "mime_type": file.mime_type,
                 "modified_time": file.modified_time,
                 "format": file.format,
+                "pdf_path": str(file.pdf_path),
                 "text_length": len(file.text),
             }
-            for file in files
+            for file in converted_files
         ],
         "jsonl_records": records,
         "jsonl_text": jsonl_text,
-        "skipped_files": skipped,
+        "skipped_files": skipped_files,
+        "removed_files": removed_file_details,
+        "removed_file_ids": removed_ids_clean,
         "ingested_chunks": ingested_count,
+        "removed_pages": removed_pages,
         "last_synced_at": last_synced_at.isoformat() if last_synced_at else None,
         "synced_at": now.isoformat(),
+        "start_page_token": new_start_token,
+        "pending_page_token": sync_state.pending_page_token,
+        "bootstrapped": bootstrapped,
     }

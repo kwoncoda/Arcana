@@ -2,58 +2,84 @@
 
 from __future__ import annotations
 
-import io
+import html
+import logging
+import re
+import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
-import docx
 import httpx
-import pandas as pd
 import tiktoken
 from langchain_core.documents import Document
+from pypdf import PdfReader
 
 
 FILES_ENDPOINT = "https://www.googleapis.com/drive/v3/files"
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_FIELDS = (
     "nextPageToken, files(id, name, mimeType, modifiedTime, webViewLink,"
     " size, capabilities/canDownload)"
 )
 
-_EXPORT_MIME_MAP: Dict[str, Optional[str]] = {
-    "application/vnd.google-apps.document": "text/plain",
-    "application/vnd.google-apps.spreadsheet": "text/csv",
-    "application/vnd.google-apps.presentation": "text/plain",
-}
-
-_TEXT_MIME_TYPES = {
+_CONVERTIBLE_MIME_TYPES = {
+    "application/vnd.google-apps.document",
+    "application/vnd.google-apps.spreadsheet",
+    "application/vnd.google-apps.presentation",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "text/plain",
-    "text/markdown",
     "text/csv",
-    "application/csv",
-    "application/json",
+    "application/pdf",
 }
 
-_DOCX_MIME_TYPES = {
+_GOOGLE_NATIVE_MIME_TYPES = {
+    "application/vnd.google-apps.document",
+    "application/vnd.google-apps.spreadsheet",
+    "application/vnd.google-apps.presentation",
+}
+
+_CONVERT_TO_GOOGLE_MIME_MAP = {
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "application/vnd.google-apps.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "application/vnd.google-apps.spreadsheet",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": "application/vnd.google-apps.presentation",
+    "text/plain": "application/vnd.google-apps.document",
+    "text/csv": "application/vnd.google-apps.spreadsheet",
+}
+
+_DIRECT_DOWNLOAD_MIME_TYPES = {
+    "application/pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
 
-_XLSX_MIME_TYPES = {
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "application/vnd.ms-excel",
-}
-
-_PDF_MIME_TYPES = {"application/pdf"}
-
 _HWP_MIME_TYPES = {"application/x-hwp", "application/haansoft-hwp"}
-
-_ENCODINGS = ("utf-8", "cp949", "euc-kr", "latin-1")
 
 _ENC = tiktoken.get_encoding("cl100k_base")
 
 _DEFAULT_CHUNK_SIZE = 800
 _DEFAULT_CHUNK_OVERLAP_RATIO = 0.1
+
+_PDF_EXPORT_MIME = "application/pdf"
+_OPENXML_EXPORT_MIME = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+)
+
+_STRUCTURED_EXPORT_MIME_TYPES = {
+    "application/vnd.google-apps.document",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+
+_FILENAME_SANITIZE_PATTERN = re.compile(r"[^\w .-]+", re.UNICODE)
+
+
+# 외부 모듈에서 사용할 수 있도록 공개 상수로 재노출한다.
+CONVERTIBLE_MIME_TYPES = frozenset(_CONVERTIBLE_MIME_TYPES)
+GOOGLE_NATIVE_MIME_TYPES = frozenset(_GOOGLE_NATIVE_MIME_TYPES)
 
 
 class GoogleDriveAPIError(RuntimeError):
@@ -75,6 +101,8 @@ class GoogleDriveFile:
     web_view_link: Optional[str]
     text: str
     format: str
+    pdf_path: Path
+    formatted_text: Optional[str] = None
 
 
 def _format_datetime_for_query(value: datetime) -> str:
@@ -92,11 +120,16 @@ async def _list_files(
     modified_after: Optional[datetime] = None,
 ) -> List[Dict[str, str]]:
     headers = {"Authorization": f"Bearer {access_token}"}
+    convertible_query = "(" + " or ".join(
+        f"mimeType = '{mime}'" for mime in sorted(_CONVERTIBLE_MIME_TYPES)
+    ) + ")"
+
     params = {
         "pageSize": 200,
         "fields": _DEFAULT_FIELDS,
-        "supportsAllDrives": "false",
-        "includeItemsFromAllDrives": "false",
+        "supportsAllDrives": "true",
+        "includeItemsFromAllDrives": "true",
+        "spaces": "drive",
         "orderBy": "modifiedTime desc",
         "q": " and ".join(
             filter(
@@ -104,7 +137,7 @@ async def _list_files(
                 [
                     "trashed=false",
                     "mimeType != 'application/vnd.google-apps.folder'",
-                    "'me' in owners",
+                    convertible_query,
                     (
                         f"modifiedTime > '{_format_datetime_for_query(modified_after)}'"
                         if modified_after
@@ -139,29 +172,216 @@ async def _list_files(
     return files
 
 
-def _decode_text(content: bytes) -> str:
-    for encoding in _ENCODINGS:
+def _sanitize_filename(name: str) -> str:
+    sanitized = _FILENAME_SANITIZE_PATTERN.sub("_", name.strip())
+    sanitized = sanitized.strip(" ._-")
+    return sanitized or "document"
+
+
+def _write_file(
+    download_dir: Path, name: str, file_id: str, extension: str, content: bytes
+) -> Path:
+    download_dir.mkdir(parents=True, exist_ok=True)
+    base_name = _sanitize_filename(name) or "document"
+    filename = f"{base_name}-{file_id}.{extension}"
+    path = download_dir / filename
+    path.write_bytes(content)
+    logger.info("Google Drive 파일 '%s'을(를) %s로 저장했습니다: %s", name, extension, path)
+    return path
+
+
+def _extract_pdf_text(pdf_path: Path) -> str:
+    try:
+        reader = PdfReader(str(pdf_path))
+    except Exception as exc:  # pragma: no cover - PDF 파서 방어
+        raise UnsupportedGoogleDriveFile(f"PDF를 열 수 없습니다: {exc}") from exc
+
+    texts: List[str] = []
+    for index, page in enumerate(reader.pages):
         try:
-            return content.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-    return content.decode("utf-8", errors="ignore")
+            extracted = page.extract_text() or ""
+        except Exception as exc:  # pragma: no cover - PDF 파서 방어
+            logger.warning(
+                "PDF 페이지(%s, %s) 텍스트 추출에 실패했습니다: %s",
+                pdf_path.name,
+                index,
+                exc,
+            )
+            extracted = ""
+        if extracted.strip():
+            texts.append(extracted.strip())
+
+    combined = "\n\n".join(texts).strip()
+    if not combined:
+        logger.warning("PDF에서 추출된 텍스트가 없습니다: %s", pdf_path)
+    return combined
 
 
-def _convert_docx(content: bytes) -> str:
-    document = docx.Document(io.BytesIO(content))
-    lines = [paragraph.text for paragraph in document.paragraphs]
-    return "\n".join(filter(None, lines)).strip()
+def _extract_docx_xml(docx_path: Path) -> str:
+    try:
+        with zipfile.ZipFile(docx_path) as archive:
+            with archive.open("word/document.xml") as document_xml:
+                data = document_xml.read()
+    except KeyError as exc:
+        raise UnsupportedGoogleDriveFile("DOCX 문서에서 XML을 찾을 수 없습니다.") from exc
+    except Exception as exc:  # pragma: no cover - DOCX 파서 방어
+        raise UnsupportedGoogleDriveFile(f"DOCX 문서를 열 수 없습니다: {exc}") from exc
+
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("utf-8", errors="ignore")
 
 
-def _convert_excel(content: bytes) -> str:
-    data = io.BytesIO(content)
-    frames = pd.read_excel(data, sheet_name=None, dtype=str, na_filter=False)
-    parts: List[str] = []
-    for sheet_name, frame in frames.items():
-        parts.append(f"# Sheet: {sheet_name}")
-        parts.append(frame.to_csv(index=False))
-    return "\n\n".join(parts).strip()
+_XML_TAG_PATTERN = re.compile(r"<[^>]+>")
+
+
+def _xml_to_plain_text(xml_text: str) -> str:
+    normalized = (
+        xml_text.replace("</w:p>", "</w:p>\n")
+        .replace("</w:tr>", "</w:tr>\n")
+        .replace("<w:br/>", "\n")
+    )
+    collapsed = _XML_TAG_PATTERN.sub("", normalized)
+    collapsed = html.unescape(collapsed)
+    collapsed = collapsed.replace("\r", "")
+    collapsed = re.sub(r"\n{3,}", "\n\n", collapsed)
+    return collapsed.strip()
+
+
+async def _copy_file_as_google_type(
+    client: httpx.AsyncClient,
+    *,
+    file_id: str,
+    target_mime: str,
+    headers: Dict[str, str],
+    original_name: str,
+) -> str:
+    logger.info(
+        "Google Drive 파일 '%s'을(를) '%s' 형식으로 임시 변환합니다.",
+        original_name,
+        target_mime,
+    )
+    body = {
+        "mimeType": target_mime,
+        "name": f"[Arcana Temp] {original_name}",
+        "parents": ["root"],
+    }
+    response = await client.post(
+        f"{FILES_ENDPOINT}/{file_id}/copy",
+        headers=headers,
+        params={"supportsAllDrives": "true", "includeItemsFromAllDrives": "true"},
+        json=body,
+    )
+    if response.status_code != 200:
+        raise GoogleDriveAPIError(response.text)
+    payload = response.json()
+    temp_id = payload.get("id")
+    if not temp_id:
+        raise GoogleDriveAPIError("임시 Google 문서 ID를 가져오지 못했습니다.")
+    return temp_id
+
+
+async def _delete_temporary_file(
+    client: httpx.AsyncClient,
+    *,
+    file_id: str,
+    headers: Dict[str, str],
+) -> None:
+    try:
+        response = await client.delete(
+            f"{FILES_ENDPOINT}/{file_id}",
+            headers=headers,
+            params={"supportsAllDrives": "true"},
+        )
+        if response.status_code not in {200, 204}:
+            logger.warning(
+                "임시 Google 문서를 삭제하지 못했습니다(%s): %s",
+                file_id,
+                response.text,
+            )
+    except Exception as exc:  # pragma: no cover - 방어적 로깅
+        logger.warning("임시 Google 문서 삭제 중 오류(%s): %s", file_id, exc)
+
+
+async def _download_file(
+    client: httpx.AsyncClient,
+    *,
+    file: Dict[str, str],
+    headers: Dict[str, str],
+    download_dir: Path,
+) -> Tuple[Path, str]:
+    file_id = file.get("id") or ""
+    mime_type = file.get("mimeType") or ""
+    name = file.get("name") or ""
+
+    if not file_id:
+        raise GoogleDriveAPIError("파일 ID가 없습니다.")
+
+    if mime_type in _HWP_MIME_TYPES or name.lower().endswith(".hwp"):
+        raise UnsupportedGoogleDriveFile("한글(.hwp) 파일은 지원하지 않습니다.")
+
+    temporary_id: Optional[str] = None
+    export_source_id = file_id
+    use_openxml = mime_type in _STRUCTURED_EXPORT_MIME_TYPES
+    export_mime = _OPENXML_EXPORT_MIME if use_openxml else _PDF_EXPORT_MIME
+    file_extension = "docx" if use_openxml else "pdf"
+    format_label = "docx_xml" if use_openxml else "pdf"
+
+    if mime_type in _GOOGLE_NATIVE_MIME_TYPES:
+        logger.info(
+            "Google Drive 파일 '%s'을(를) %s로 내보냅니다.",
+            name,
+            "DOCX" if use_openxml else "PDF",
+        )
+    elif mime_type in _DIRECT_DOWNLOAD_MIME_TYPES:
+        logger.info("Google Drive 파일 '%s'을(를) 직접 다운로드합니다.", name)
+    elif mime_type in _CONVERT_TO_GOOGLE_MIME_MAP and not use_openxml:
+        target_mime = _CONVERT_TO_GOOGLE_MIME_MAP[mime_type]
+        temporary_id = await _copy_file_as_google_type(
+            client,
+            file_id=file_id,
+            target_mime=target_mime,
+            headers=headers,
+            original_name=name,
+        )
+        export_source_id = temporary_id
+    else:
+        raise UnsupportedGoogleDriveFile(
+            f"지원하지 않는 Google Drive 파일 형식입니다: {mime_type}"
+        )
+
+    try:
+        if mime_type in _DIRECT_DOWNLOAD_MIME_TYPES:
+            response = await client.get(
+                f"{FILES_ENDPOINT}/{export_source_id}",
+                headers=headers,
+                params={
+                    "alt": "media",
+                    "supportsAllDrives": "true",
+                    "includeItemsFromAllDrives": "true",
+                },
+            )
+        else:
+            response = await client.get(
+                f"{FILES_ENDPOINT}/{export_source_id}/export",
+                headers=headers,
+                params={
+                    "mimeType": export_mime,
+                    "supportsAllDrives": "true",
+                    "includeItemsFromAllDrives": "true",
+                },
+            )
+        if response.status_code != 200:
+            raise GoogleDriveAPIError(response.text)
+        pdf_path = _write_file(
+            download_dir, name, file_id, file_extension, response.content
+        )
+    finally:
+        if temporary_id:
+            await _delete_temporary_file(client, file_id=temporary_id, headers=headers)
+
+    return pdf_path, format_label
 
 
 def _chunk_text(
@@ -205,7 +425,11 @@ def _build_records_from_file(
     records: List[Dict[str, str]] = []
     chunks = _chunk_text(file.text, chunk_size=chunk_size, overlap_ratio=overlap_ratio)
 
+    formatted_source = file.formatted_text if file.formatted_text else None
+
     if not chunks:
+        plain_text = file.text
+        formatted_text = formatted_source or plain_text
         records.append(
             {
                 "file_id": file.file_id,
@@ -213,15 +437,18 @@ def _build_records_from_file(
                 "modified_time": file.modified_time,
                 "url": file.web_view_link or "",
                 "mime_type": file.mime_type,
-                "text": "",
-                "plain_text": "",
+                "text": plain_text,
+                "plain_text": plain_text,
+                "formatted_text": formatted_text,
                 "format": file.format,
+                "pdf_path": str(file.pdf_path),
                 "chunk_index": 0,
             }
         )
         return records
 
     for chunk_index, chunk in enumerate(chunks):
+        formatted_text = formatted_source or chunk
         records.append(
             {
                 "file_id": file.file_id,
@@ -231,7 +458,9 @@ def _build_records_from_file(
                 "mime_type": file.mime_type,
                 "text": chunk,
                 "plain_text": chunk,
+                "formatted_text": formatted_text,
                 "format": file.format,
+                "pdf_path": str(file.pdf_path),
                 "chunk_index": chunk_index,
             }
         )
@@ -262,7 +491,11 @@ def build_documents_from_records(
     documents: List[Document] = []
     for index, record in enumerate(records):
         plain_text = record.get("plain_text") or ""
-        formatted_text = record.get("text") or plain_text
+        formatted_text = (
+            record.get("formatted_text")
+            or record.get("text")
+            or plain_text
+        )
         if not plain_text.strip():
             continue
 
@@ -287,124 +520,115 @@ def build_documents_from_records(
                 "provider": "googledrive",
                 "file_id": file_id,
                 "file_mime_type": record.get("mime_type"),
+                "pdf_path": record.get("pdf_path"),
             }
         )
         documents.append(Document(page_content=plain_text, metadata=metadata))
     return documents
 
 
-async def _download_file(
-    client: httpx.AsyncClient,
-    *,
-    file: Dict[str, str],
-    headers: Dict[str, str],
-) -> Tuple[str, str]:
-    file_id = file.get("id")
-    mime_type = file.get("mimeType") or ""
-    name = file.get("name") or ""
-
-    if mime_type in _HWP_MIME_TYPES or name.lower().endswith(".hwp"):
-        raise UnsupportedGoogleDriveFile("한글(.hwp) 파일은 지원하지 않습니다.")
-
-    export_mime = _EXPORT_MIME_MAP.get(mime_type)
-    if export_mime is not None:
-        params = {"mimeType": export_mime}
-        response = await client.get(
-            f"{FILES_ENDPOINT}/{file_id}/export",
-            headers=headers,
-            params=params,
-        )
-        if response.status_code != 200:
-            raise GoogleDriveAPIError(response.text)
-        content = response.content
-        mime_type = export_mime
-    else:
-        response = await client.get(
-            f"{FILES_ENDPOINT}/{file_id}",
-            headers=headers,
-            params={"alt": "media"},
-        )
-        if response.status_code != 200:
-            raise GoogleDriveAPIError(response.text)
-        content = response.content
-
-    if mime_type in _TEXT_MIME_TYPES:
-        return _decode_text(content), "text"
-    if mime_type in _DOCX_MIME_TYPES:
-        return _convert_docx(content), "text"
-    if mime_type in _XLSX_MIME_TYPES:
-        return _convert_excel(content), "csv"
-    if mime_type in _PDF_MIME_TYPES:
-        raise UnsupportedGoogleDriveFile("PDF 파일은 현재 지원하지 않습니다.")
-
-    raise UnsupportedGoogleDriveFile(
-        f"지원하지 않는 Google Drive 파일 형식입니다: {mime_type}"
-    )
-
-
 async def fetch_authorized_text_files(
     access_token: str,
     *,
     modified_after: Optional[datetime] = None,
+    download_dir: Path,
+    files_override: Optional[Sequence[Dict[str, str]]] = None,
 ) -> Tuple[List[GoogleDriveFile], List[Dict[str, str]]]:
     async with httpx.AsyncClient(timeout=60) as client:
-        raw_files = await _list_files(
-            client, access_token=access_token, modified_after=modified_after
-        )
+        if files_override is not None:
+            raw_files = list(files_override)
+            logger.info(
+                "사전 계산된 Google Drive 파일 %d건에 대해 변환을 진행합니다.",
+                len(raw_files),
+            )
+        else:
+            raw_files = await _list_files(
+                client, access_token=access_token, modified_after=modified_after
+            )
+
+            logger.info(
+                "Google Drive에서 %d개의 변환 대상 파일을 찾았습니다.", len(raw_files)
+            )
 
         headers = {"Authorization": f"Bearer {access_token}"}
         converted: List[GoogleDriveFile] = []
         skipped: List[Dict[str, str]] = []
 
-        for file in raw_files:
+        for index, file in enumerate(raw_files, start=1):
+            file_id = file.get("id") or ""
+            name = file.get("name") or ""
+            mime_type = file.get("mimeType") or ""
+            logger.info(
+                "(%d/%d) Google Drive 파일 동기화 시작: %s (%s)",
+                index,
+                len(raw_files),
+                name,
+                file_id,
+            )
+
             capabilities = file.get("capabilities") or {}
             can_download = capabilities.get("canDownload", True)
-            if not can_download and file.get("mimeType") not in _EXPORT_MIME_MAP:
+            if not can_download:
                 skipped.append(
                     {
-                        "file_id": file.get("id"),
-                        "name": file.get("name"),
-                        "mime_type": file.get("mimeType"),
+                        "file_id": file_id,
+                        "name": name,
+                        "mime_type": mime_type,
                         "reason": "다운로드 권한이 없습니다.",
                     }
                 )
+                logger.info("파일 '%s'은(는) 다운로드 권한이 없어 건너뜁니다.", name)
                 continue
 
             try:
-                text, fmt = await _download_file(
-                    client, file=file, headers=headers
+                pdf_path, fmt = await _download_file(
+                    client,
+                    file=file,
+                    headers=headers,
+                    download_dir=download_dir,
                 )
+                if fmt == "docx_xml":
+                    formatted = _extract_docx_xml(pdf_path)
+                    plain = _xml_to_plain_text(formatted)
+                else:
+                    formatted = None
+                    plain = _extract_pdf_text(pdf_path)
             except UnsupportedGoogleDriveFile as exc:
                 skipped.append(
                     {
-                        "file_id": file.get("id"),
-                        "name": file.get("name"),
-                        "mime_type": file.get("mimeType"),
+                        "file_id": file_id,
+                        "name": name,
+                        "mime_type": mime_type,
                         "reason": str(exc),
                     }
                 )
+                logger.info("파일 '%s'은(는) 지원하지 않는 형식입니다: %s", name, exc)
                 continue
             except GoogleDriveAPIError as exc:
                 skipped.append(
                     {
-                        "file_id": file.get("id"),
-                        "name": file.get("name"),
-                        "mime_type": file.get("mimeType"),
+                        "file_id": file_id,
+                        "name": name,
+                        "mime_type": mime_type,
                         "reason": f"API 오류: {exc}",
                     }
                 )
+                logger.warning("파일 '%s' 처리 중 API 오류: %s", name, exc)
                 continue
 
             converted.append(
                 GoogleDriveFile(
-                    file_id=file.get("id", ""),
-                    name=file.get("name", ""),
-                    mime_type=file.get("mimeType", ""),
+                    file_id=file_id,
+                    name=name,
+                    mime_type=mime_type,
                     modified_time=file.get("modifiedTime", ""),
                     web_view_link=file.get("webViewLink"),
-                    text=text,
+                    text=plain,
                     format=fmt,
+                    pdf_path=pdf_path,
+                    formatted_text=formatted,
                 )
             )
+            logger.info("파일 '%s' 동기화 완료", name)
 
     return converted, skipped
