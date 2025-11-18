@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react'; // useEffect 추가
-import styled from 'styled-components';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import styled, { keyframes } from 'styled-components';
 import { useNavigate, Link } from 'react-router-dom';
-import axios from 'axios'; // axios 추가
+import axios from 'axios';
 import { 
   Home, 
   MessageSquare, 
@@ -18,7 +18,8 @@ import {
   AlertCircle,
   CheckCircle,
   HelpCircle,
-  Brain
+  Brain,
+  Copy
 } from 'lucide-react';
 
 // --- Layout Containers ---
@@ -177,7 +178,6 @@ const NavItem = styled.li`
   color: #CBD5E0;
   cursor: pointer;
   gap: 10px;
-  /* Link로 사용될 때 a 태그의 기본 스타일을 덮어씁니다. */
   text-decoration: none; 
 
   &:hover {
@@ -209,7 +209,6 @@ const DataSourceItem = styled(NavItem)`
   }
 `;
 
-// DATA SOURCE가 비어있을 때 표시할 컴포넌트
 const EmptyDataSource = styled.div`
   padding: 10px 12px;
   font-size: 14px;
@@ -315,7 +314,6 @@ const UserProfile = styled.div`
     font-weight: 600;
   }
   
-  /* 500px 이하 숨김 */
   .user-info {
     display: flex;
     align-items: center;
@@ -344,7 +342,99 @@ const ChatContainer = styled.div`
   gap: 20px;
 `;
 
-// 웰컴 메시지 (채팅 비어있을 때)
+const MessageWrapper = styled.div`
+  display: flex;
+  flex-direction: column;
+  align-items: ${props => (props.$role === 'user' ? 'flex-end' : 'flex-start')};
+`;
+
+const MessageHeader = styled.span`
+  font-size: 13px;
+  font-weight: 600;
+  color: #4A5568;
+  margin-bottom: 6px;
+`;
+
+const MessageBubble = styled.div`
+  max-width: 80%;
+  padding: 12px 16px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+`;
+
+const UserMessageBubble = styled(MessageBubble)`
+  background-color: #6200EE;
+  color: white;
+  border-top-right-radius: 0;
+`;
+
+const AIMessageBubble = styled(MessageBubble)`
+  background-color: #F7F7F9;
+  color: #1A202C;
+  border: 1px solid #E2E8F0;
+  border-top-left-radius: 0;
+  position: relative;
+`;
+
+const MessageToolbar = styled.div`
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #E2E8F0;
+`;
+
+const CopyButton = styled.button`
+  background: none;
+  border: none;
+  color: #718096;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  padding: 4px;
+
+  &:hover {
+    color: #1A202C;
+  }
+`;
+
+const SourceLink = styled.a`
+  font-size: 12px;
+  color: #4299E1;
+  text-decoration: none;
+  display: block;
+  margin-top: 8px;
+  &:hover { text-decoration: underline; }
+`;
+
+const pulse = keyframes`
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+`;
+
+const LoadingDots = styled.div`
+  display: flex;
+  gap: 4px;
+  padding: 12px 16px;
+
+  & > div {
+    width: 8px;
+    height: 8px;
+    background-color: #A0AEC0;
+    border-radius: 50%;
+    animation: ${pulse} 1.2s cubic-bezier(0, 0.5, 0.5, 1) infinite;
+  }
+
+  & > div:nth-child(1) { animation-delay: -0.24s; }
+  & > div:nth-child(2) { animation-delay: -0.12s; }
+  & > div:nth-child(3) { animation-delay: 0s; }
+`;
+
+
 const WelcomeMessage = styled.div`
   background-color: #F7F7F9;
   border: 1px solid #E2E8F0;
@@ -394,8 +484,11 @@ const ChatTextarea = styled.textarea`
   resize: none;
   font-size: 14px;
   color: #2D3748;
-  min-height: 60px;
+  line-height: 1.6;
+  min-height: 24px;
+  max-height: 200px;
   font-family: inherit;
+  overflow-y: auto;
 
   &::placeholder {
     color: #A0AEC0;
@@ -437,6 +530,11 @@ const SendButton = styled.button`
 
   &:hover {
     background-color: #5100C4;
+  }
+
+  &:disabled {
+    background-color: #BDBDBD;
+    cursor: not-allowed;
   }
 `;
 
@@ -496,8 +594,7 @@ const providerDetails = {
   notion: { name: 'Notion', icon: 'N', color: '#000000', bg: '#E0E0E0' },
   slack: { name: 'Slack', icon: 'S', color: '#4A154B', bg: '#EFE1EF' },
   jira: { name: 'Jira', icon: 'J', color: '#0052CC', bg: '#DEEBFF' },
-  // 다른 프로바이더가 있다면 여기에 추가
-  // google: { ... }
+  "google-drive": { name: 'Google Drive', icon: 'G', color: '#1A73E8', bg: '#E8F0FE' },
 };
 
 const getProviderDetails = connection => {
@@ -519,17 +616,40 @@ const getProviderDetails = connection => {
   };
 };
 
+// 닉네임 이니셜 생성 헬퍼 함수
+const getInitials = (name) => {
+  if (!name) return 'U';
+  const parts = name.trim().split(' ');
+  // "Gildong Hong" -> "GH"
+  if (parts.length > 1 && parts[parts.length - 1]) {
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+  // "Gildong" -> "G"
+  return name[0].toUpperCase();
+};
+
 
 // --- React Component ---
 
 function MainDashboard() {
   const [chatInput, setChatInput] = useState('');
-  // 1. API 응답을 저장할 state
   const [connections, setConnections] = useState([]);
   const [loadingConnections, setLoadingConnections] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState(null);
   const navigate = useNavigate();
+
+  // 1. 닉네임/이니셜 state 추가
+  const [userNickname, setUserNickname] = useState('User');
+  const [userInitials, setUserInitials] = useState('U');
+
+  const [chatMessages, setChatMessages] = useState([]); 
+  const [isChatLoading, setIsChatLoading] = useState(false); 
+  const chatContainerRef = useRef(null); 
+  const textareaRef = useRef(null); 
+  
+  // 2. 한글 입력 버그 수정을 위한 state
+  const [isComposing, setIsComposing] = useState(false);
 
   const fetchConnections = useCallback(async (tokenOverride) => {
     setLoadingConnections(true);
@@ -540,7 +660,6 @@ function MainDashboard() {
         return [];
       }
 
-      // GET /users/connections API 호출
       const res = await axios.get('/api/users/connections', {
         headers: {
           'Authorization': `Bearer ${token}`
@@ -556,6 +675,7 @@ function MainDashboard() {
       if (status === 401 || status === 404) {
         localStorage.removeItem('accessToken');
         localStorage.removeItem('refreshToken');
+        localStorage.removeItem('userNickname'); // 닉네임도 함께 삭제
         navigate('/login');
       }
       throw err;
@@ -564,20 +684,39 @@ function MainDashboard() {
     }
   }, [navigate]);
 
-  // 2. 컴포넌트 마운트 시 API 호출
   useEffect(() => {
-    fetchConnections().catch(() => {
-      // 초기 로딩 시 에러는 콘솔에 기록되었으므로 UI에서 별도 처리하지 않습니다.
-    });
-  }, [fetchConnections]); // navigate가 변경될 일은 없지만, 의존성 배열에 추가
+    // 3. 페이지 로드 시 닉네임 불러오기
+    const nickname = localStorage.getItem('userNickname');
+    if (nickname) {
+      setUserNickname(nickname);
+      setUserInitials(getInitials(nickname));
+    }
+    
+    fetchConnections().catch(() => {});
+  }, [fetchConnections]);
 
-  const handleLogout = () => {
-    localStorage.removeItem('accessToken');
-    localStorage.removeItem('refreshToken');
-    navigate('/login');
+  // 5. 채팅창 스크롤 맨 아래로 이동
+  useEffect(() => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, [chatMessages, isChatLoading]);
+
+  // 6. Textarea 높이 자동 조절
+  const autoResizeTextarea = (element) => {
+    element.style.height = 'auto'; 
+    element.style.height = `${element.scrollHeight}px`; 
   };
 
+  const handleTextareaChange = (e) => {
+    setChatInput(e.target.value);
+    autoResizeTextarea(e.target);
+  };
+
+  // 4. handleLogout 함수는 MyPage.jsx로 이동했으므로 여기서는 삭제됨.
+
   const handleRefreshKnowledge = async () => {
+    // ... (기존 갱신 로직)
     if (syncing) return;
 
     const token = localStorage.getItem('accessToken');
@@ -660,6 +799,7 @@ function MainDashboard() {
               unauthorizedDetected = true;
               localStorage.removeItem('accessToken');
               localStorage.removeItem('refreshToken');
+              localStorage.removeItem('userNickname'); // 닉네임 삭제
               navigate('/login');
               failureMessages.push(`${displayName}: 인증이 만료되었습니다. 다시 로그인해주세요.`);
             } else {
@@ -724,6 +864,104 @@ function MainDashboard() {
     }
   };
 
+  // 7. 메시지 전송 핸들러
+  const handleSendMessage = async () => {
+    const query = chatInput.trim();
+    // 5. isComposing 확인
+    if (!query || isChatLoading || isComposing) return;
+
+    setIsChatLoading(true);
+    setChatInput(''); 
+    if (textareaRef.current) {
+      autoResizeTextarea(textareaRef.current);
+    }
+
+    const token = localStorage.getItem('accessToken');
+    if (!token) {
+      navigate('/login');
+      return;
+    }
+
+    setChatMessages((prev) => [...prev, { role: 'user', content: query }]);
+
+    try {
+      const res = await axios.post(
+        '/api/aiagent/search', 
+        { query },
+        { headers: { 'Authorization': `Bearer ${token}` } }
+      );
+      
+      const { answer, notion_page_url, notion_page_id } = res.data;
+
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          role: 'ai',
+          content: answer,
+          sourcePage: notion_page_url,
+          sourceId: notion_page_id,
+        },
+      ]);
+    } catch (err) {
+      console.error('AI Search Error:', err);
+      let errorMessage = '답변을 생성하는 중 오류가 발생했습니다.';
+      if (err.response) {
+        if (err.response.status === 401) {
+          navigate('/login');
+          return;
+        }
+        if (err.response.data.detail) {
+          errorMessage = `오류: ${err.response.data.detail}`;
+        }
+      }
+      setChatMessages((prev) => [
+        ...prev,
+        { role: 'ai', content: errorMessage, isError: true },
+      ]);
+    } finally {
+      setIsChatLoading(false);
+    }
+  };
+
+  // 8. Enter / Shift+Enter 키 처리
+  const handleKeyDown = (e) => {
+    // 6. isComposing 아닐 때만 전송
+    if (e.key === 'Enter' && !e.shiftKey && !isComposing) {
+      e.preventDefault(); 
+      handleSendMessage();
+    }
+  };
+
+  // 9. 복사 버튼 핸들러
+  const handleCopy = (text) => {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    document.body.appendChild(textArea);
+    textArea.select();
+    try {
+      document.execCommand('copy');
+    } catch (err) {
+      console.error('Failed to copy text:', err);
+    }
+    document.body.removeChild(textArea);
+  };
+
+  const renderConnectionItem = (conn) => {
+    const details = getProviderDetails(conn);
+    
+    if (conn.status === 'connected' || conn.connected === true) {
+      return (
+        <DataSourceItem key={conn.type || details.name}>
+          <span style={{ color: details.color, backgroundColor: details.bg }}>
+            {details.icon}
+          </span>
+          {details.name}
+        </DataSourceItem>
+      );
+    }
+    return null; 
+  };
+
   return (
     <DashboardContainer>
       
@@ -741,25 +979,10 @@ function MainDashboard() {
 
           <SectionTitle>DATA SOURCES</SectionTitle>
           
-          {/* 3. API 응답에 따라 동적으로 렌더링 */}
           {loadingConnections ? (
             <EmptyDataSource>연결된 소스 로딩 중...</EmptyDataSource>
           ) : connections.length > 0 ? (
-            connections.map((conn, index) => {
-              const details = getProviderDetails(conn);
-
-              if (conn.status === 'connected') {
-                return (
-                  <DataSourceItem key={`${details.name}-${index}`}>
-                    <span style={{ color: details.color, backgroundColor: details.bg }}>
-                      {details.icon}
-                    </span>
-                    {details.name}
-                  </DataSourceItem>
-                );
-              }
-              return null;
-            })
+            connections.map(renderConnectionItem)
           ) : (
             <EmptyDataSource>
               연결된 소스가 없습니다.
@@ -809,10 +1032,11 @@ function MainDashboard() {
               <RefreshCw size={16} />
               {syncing ? '갱신 중...' : '지식 베이스 갱신'}
             </RefreshButton>
-            <UserProfile onClick={handleLogout}>
-              <div className="avatar">AK</div>
+            {/* 7. 닉네임/이니셜 동적 적용 및 /mypage로 이동 */}
+            <UserProfile onClick={() => navigate('/mypage')}>
+              <div className="avatar">{userInitials}</div>
               <div className="user-info">
-                <span>Aiden Kim</span>
+                <span>{userNickname}</span>
                 <ChevronDown size={18} />
               </div>
             </UserProfile>
@@ -830,25 +1054,72 @@ function MainDashboard() {
           
           {/* 2.2.1 Chat Wrapper (Center) */}
           <ChatWrapper>
-            <ChatContainer>
-              {/* 채팅이 비어있을 때 표시되는 웰컴 메시지 */}
-              <WelcomeMessage>
-                <h3>안녕하세요! Arcana AI Assistant입니다.</h3>
-                <p>조직의 모든 지식을 통합하여 맥락적 답변을 제공해드립니다. 무엇을 도와드릴까요? 예를 들어</p>
-                <ul>
-                  <li>"지난 분기 고객 클레임 중 가장 큰 이슈는 무엇이었나?"</li>
-                  <li>"프로젝트 Alpha의 기술적 결정사항과 근거를 정리해줘"</li>
-                  <li>"마케팅팀의 Q4 전략 회의 내용을 요약해줘"</li>
-                </ul>
-              </WelcomeMessage>
+            <ChatContainer ref={chatContainerRef}>
+              
+              {/* 10. 채팅 메시지 렌더링 */}
+              {chatMessages.length === 0 ? (
+                <WelcomeMessage>
+                  <h3>안녕하세요! Arcana AI Assistant입니다.</h3>
+                  <p>조직의 모든 지식을 통합하여 맥락적 답변을 제공해드립니다. 무엇을 도와드릴까요? 예를 들어</p>
+                  <ul>
+                    <li>"지난 분기 고객 클레임 중 가장 큰 이슈는 무엇이었나?"</li>
+                    <li>"프로젝트 Alpha의 기술적 결정사항과 근거를 정리해줘"</li>
+                    <li>"마케팅팀의 Q4 전략 회의 내용을 요약해줘"</li>
+                  </ul>
+                </WelcomeMessage>
+              ) : (
+                chatMessages.map((msg, index) => (
+                  <MessageWrapper key={index} $role={msg.role}>
+                    <MessageHeader>
+                      {msg.role === 'user' ? 'You' : 'Arcana AI'}
+                    </MessageHeader>
+                    {msg.role === 'user' ? (
+                      <UserMessageBubble>{msg.content}</UserMessageBubble>
+                    ) : (
+                      <AIMessageBubble style={msg.isError ? {borderColor: '#FEB2B2', backgroundColor: '#FFF5F5'} : {}}>
+                        {msg.content}
+                        {/* 11. 소스 링크 및 복사 버튼 (에러 아닐 때) */}
+                        {!msg.isError && (
+                          <MessageToolbar>
+                            {msg.sourcePage && (
+                              <SourceLink href={msg.sourcePage} target="_blank" rel="noopener noreferrer">
+                                출처: {msg.sourceId || 'Notion Page'}
+                              </SourceLink>
+                            )}
+                            <CopyButton onClick={() => handleCopy(msg.content)}>
+                              <Copy size={14} /> 복사
+                            </CopyButton>
+                          </MessageToolbar>
+                        )}
+                      </AIMessageBubble>
+                    )}
+                  </MessageWrapper>
+                ))
+              )}
+
+              {/* 12. AI 응답 로딩 중 표시 */}
+              {isChatLoading && (
+                <MessageWrapper $role="ai">
+                  <MessageHeader>Arcana AI</MessageHeader>
+                  <LoadingDots>
+                    <div />
+                    <div />
+                    <div />
+                  </LoadingDots>
+                </MessageWrapper>
+              )}
             </ChatContainer>
 
             <ChatInputArea>
               <ChatTextarea
+                ref={textareaRef} 
                 placeholder="조직에서 궁금한 점들을 질문해보세요..."
                 value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                rows={3}
+                onChange={handleTextareaChange}
+                onKeyDown={handleKeyDown} 
+                rows={1} 
+                onCompositionStart={() => setIsComposing(true)} // 8. 한글 입력 시작
+                onCompositionEnd={() => setIsComposing(false)} // 9. 한글 입력 완료
               />
               <ChatToolbar>
                 <ToolbarLeft>
@@ -858,7 +1129,8 @@ function MainDashboard() {
                 </ToolbarLeft>
                 <ToolbarRight>
                   <span style={{fontSize: 12, color: '#718096'}}>Tokens 0/4000</span>
-                  <SendButton>
+                  {/* 10. 전송 버튼 disabled 조건 추가 */}
+                  <SendButton onClick={handleSendMessage} disabled={isChatLoading || isComposing}>
                     <Send size={16} />
                     전송
                   </SendButton>
@@ -888,24 +1160,10 @@ function MainDashboard() {
 
             <AnalyticsCard>
               <h3>활성화된 데이터소스</h3>
-              {/* 4. 오른쪽 사이드바에도 동일하게 적용 */}
               {loadingConnections ? (
                 <EmptyDataSource>로딩 중...</EmptyDataSource>
               ) : connections.length > 0 ? (
-                connections
-                  .filter(conn => conn.status === 'connected')
-                  .map((conn, index) => {
-                    const details = getProviderDetails(conn);
-
-                    return (
-                      <DataSourceItem key={`${details.name}-analytics-${index}`}>
-                        <span style={{ color: details.color, backgroundColor: details.bg }}>
-                          {details.icon}
-                        </span>
-                        {details.name}
-                      </DataSourceItem>
-                    );
-                  })
+                connections.map(renderConnectionItem)
               ) : (
                 <EmptyDataSource>
                   연결된 소스가 없습니다.
@@ -921,4 +1179,3 @@ function MainDashboard() {
 }
 
 export default MainDashboard;
-
