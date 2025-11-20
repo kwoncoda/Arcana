@@ -5,6 +5,8 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
+    host: '0.0.0.0',
+    allowedHosts: ['arcana.it.kr'],
     proxy: {
       // '/api'로 시작하는 요청을 감지합니다.
       '/api': {
