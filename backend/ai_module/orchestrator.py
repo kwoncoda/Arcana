@@ -18,6 +18,7 @@ from notions.notionCreate import NotionPageReference, create_page_from_markdown
 
 from .decision import AgentDecision, DecisionAgent
 from .document_generation import DocumentGenerationAgent, GeneratedDocument
+from .final_answer import FinalAnswerAgent
 from .rag_search import (
     RetrievalPayload,
     SearchResult,
@@ -40,6 +41,7 @@ class AgentState(TypedDict, total=False):
     result: SearchResult
     mode: Literal["search", "generate"]
     notion_page: NotionPageReference
+    final_message_instructions: Optional[str]
 
 
 @dataclass(slots=True)
@@ -63,10 +65,12 @@ class WorkspaceAgentOrchestrator:
         search_agent: Optional[WorkspaceRAGSearchAgent] = None,
         decision_agent: Optional[DecisionAgent] = None,
         generation_agent: Optional[DocumentGenerationAgent] = None,
+        final_answer_agent: Optional[FinalAnswerAgent] = None,
     ) -> None:
         self._search_agent = search_agent or WorkspaceRAGSearchAgent()
         self._decision_agent = decision_agent or DecisionAgent()
         self._generation_agent = generation_agent or DocumentGenerationAgent()
+        self._final_answer_agent = final_answer_agent or FinalAnswerAgent()
         self._graph = self._build_graph()
 
     def _build_graph(self):
@@ -76,6 +80,7 @@ class WorkspaceAgentOrchestrator:
         graph.add_node("prepare_rag", self._node_prepare_rag)
         graph.add_node("generate", self._node_generate)
         graph.add_node("create_page", self._node_create_page)
+        graph.add_node("final_answer", self._node_finalize)
 
         graph.set_entry_point("decide")
         graph.add_conditional_edges(
@@ -90,8 +95,9 @@ class WorkspaceAgentOrchestrator:
         )
         graph.add_edge("prepare_rag", "generate")
         graph.add_edge("generate", "create_page")
-        graph.add_edge("search", END)
-        graph.add_edge("create_page", END)
+        graph.add_edge("search", "final_answer")
+        graph.add_edge("create_page", "final_answer")
+        graph.add_edge("final_answer", END)
 
         return graph.compile()
 
@@ -173,6 +179,29 @@ class WorkspaceAgentOrchestrator:
         )
         return {"result": result, "notion_page": page_ref}
 
+    async def _node_finalize(self, state: AgentState) -> AgentState:
+        """사용자에게 전달할 최종 답변을 정리한다."""
+
+        result = state.get("result")
+        if not result:
+            raise RuntimeError("최종 답변이 준비되지 않았습니다.")
+
+        mode = state.get("mode", "search")
+        instructions = state.get("final_message_instructions")
+        refined_answer = await self._final_answer_agent.craft_final_answer(
+            answer_draft=result.answer,
+            question=result.question,
+            workspace_name=state.get("workspace_name", ""),
+            mode=mode,
+            custom_instructions=instructions,
+        )
+        refined_result = SearchResult(
+            question=result.question,
+            answer=refined_answer,
+            citations=result.citations,
+        )
+        return {"result": refined_result, "mode": mode}
+
     @staticmethod
     def _route_from_decision(state: AgentState) -> str:
         decision = state.get("decision")
@@ -192,6 +221,7 @@ class WorkspaceAgentOrchestrator:
         workspace: Workspace,
         storage_uri: Optional[str],
         query: str,
+        final_message_instructions: Optional[str] = None,
     ) -> AgentExecutionResult:
         """그래프를 실행하고 결과를 반환한다."""
 
@@ -202,6 +232,7 @@ class WorkspaceAgentOrchestrator:
             "storage_uri": storage_uri,
             "db": db,
             "user_idx": user_idx,
+            "final_message_instructions": final_message_instructions,
         }
 
         final_state = await self._graph.ainvoke(initial_state)
