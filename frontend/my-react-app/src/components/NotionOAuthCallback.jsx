@@ -60,6 +60,7 @@ function NotionOAuthCallback() {
   const navigate = useNavigate();
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMessage, setLoadingMessage] = useState('Notion과 정보를 교환하고 있습니다. 잠시만 기다려주세요...');
 
   useEffect(() => {
     const code = searchParams.get('code');
@@ -84,7 +85,7 @@ function NotionOAuthCallback() {
         }
 
         const apiUrl = '/api/notion/oauth/callback';
-        
+
         // 백엔드 API에 code와 state를 쿼리 파라미터로 전달합니다.
         // 이 때 사용자가 로그인된 상태임을 증명하기 위해 Bearer 토큰을 헤더에 포함합니다.
         await axios.get(apiUrl, {
@@ -94,10 +95,29 @@ function NotionOAuthCallback() {
           }
         });
 
-        // 성공 시 (200 OK)
+        // OAuth 완료 후 자동 RAG 동기화를 호출합니다.
+        setLoadingMessage('노션 데이터로 지식 베이스를 갱신하고 있습니다...');
+        let syncFailed = false;
+
+        try {
+          await axios.post('/api/notion/pages/pull', {}, {
+            headers: {
+              'Authorization': `Bearer ${token}`
+            }
+          });
+        } catch (syncError) {
+          console.error('Notion RAG 동기화 실패:', syncError);
+          syncFailed = true;
+        }
+
         setLoading(false);
-        // 대시보드로 리다이렉트합니다.
-        navigate('/dashboard');
+
+        navigate('/connect/notion', {
+          state: {
+            notionConnected: true,
+            notionSyncFailed: syncFailed,
+          },
+        });
 
       } catch (err) {
         console.error('OAuth Callback Error:', err);
@@ -116,7 +136,7 @@ function NotionOAuthCallback() {
   return (
     <Container>
       <Title>Notion 연동 처리 중...</Title>
-      {loading && <LoadingText>Notion과 정보를 교환하고 있습니다. 잠시만 기다려주세요...</LoadingText>}
+      {loading && <LoadingText>{loadingMessage}</LoadingText>}
       {error && (
         <>
           <ErrorMessage>{error}</ErrorMessage>

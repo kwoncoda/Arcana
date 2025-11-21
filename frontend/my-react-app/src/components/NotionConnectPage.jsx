@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import styled from 'styled-components';
 import axios from 'axios';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
 // 1. 이미지를 import 합니다. (경로는 src/assets/notion.png 기준)
 import notionLogo from '../assets/notion.png';
 
@@ -121,6 +121,19 @@ const ErrorMessage = styled.p`
   margin-top: 16px;
 `;
 
+const SuccessMessage = styled.p`
+  font-size: 14px;
+  color: #1B5E20;
+  background-color: #E8F5E9;
+  border: 1px solid #A5D6A7;
+  border-radius: 8px;
+  padding: 12px;
+  width: 100%;
+  text-align: center;
+  margin-top: 16px;
+  font-weight: 700;
+`;
+
 const BackLink = styled(Link)`
   font-size: 14px;
   color: #555;
@@ -146,7 +159,22 @@ function NotionConnectPage() {
   const [error, setError] = useState(null);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [googleError, setGoogleError] = useState(null);
+  const [successMessage, setSuccessMessage] = useState('');
+  const [syncWarning, setSyncWarning] = useState('');
+  const location = useLocation();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (location.state?.notionConnected) {
+      setSuccessMessage('노션이 연동되었습니다.');
+      if (location.state.notionSyncFailed) {
+        setSyncWarning('연동은 완료되었지만 지식 베이스 갱신 중 오류가 발생했습니다. 다시 시도해주세요.');
+      }
+
+      // 상태를 초기화하여 새로 고침 시 메시지가 중복되지 않도록 함
+      navigate('.', { replace: true, state: {} });
+    }
+  }, [location.state, navigate]);
 
   const handleSubmit = async () => {
     setLoading(true);
@@ -281,6 +309,8 @@ function NotionConnectPage() {
             Notion 연동 시작하기
           </Button>
 
+          {successMessage && <SuccessMessage>{successMessage}</SuccessMessage>}
+          {syncWarning && <ErrorMessage>{syncWarning}</ErrorMessage>}
           {error && <ErrorMessage>{error}</ErrorMessage>}
         </ContentBox>
 
