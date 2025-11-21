@@ -9,9 +9,10 @@ import {
   Settings, 
   Plus, 
   RefreshCw,
-  ChevronDown, 
-  User, 
-  Send, 
+  ChevronDown,
+  User,
+  Send,
+  Square,
   Paperclip,
   Activity,
   FileText,
@@ -624,7 +625,7 @@ const ToolbarRight = styled.div`
 `;
 
 const SendButton = styled.button`
-  background-color: #6200EE;
+  background-color: ${({ $variant }) => ($variant === 'stop' ? '#E53E3E' : '#6200EE')};
   color: white;
   border: none;
   border-radius: 6px;
@@ -637,7 +638,7 @@ const SendButton = styled.button`
   font-weight: 500;
 
   &:hover {
-    background-color: #5100C4;
+    background-color: ${({ $variant }) => ($variant === 'stop' ? '#C53030' : '#5100C4')};
   }
 
   &:disabled {
@@ -799,10 +800,11 @@ function MainDashboard() {
   const [userNickname, setUserNickname] = useState('User');
   const [userInitials, setUserInitials] = useState('U');
 
-  const [chatMessages, setChatMessages] = useState([]); 
-  const [isChatLoading, setIsChatLoading] = useState(false); 
-  const chatContainerRef = useRef(null); 
-  const textareaRef = useRef(null); 
+  const [chatMessages, setChatMessages] = useState([]);
+  const [isChatLoading, setIsChatLoading] = useState(false);
+  const chatContainerRef = useRef(null);
+  const textareaRef = useRef(null);
+  const chatRequestControllerRef = useRef(null);
   
   const [isComposing, setIsComposing] = useState(false);
 
@@ -1041,8 +1043,10 @@ function MainDashboard() {
     const query = chatInput.trim();
     if (!query || isChatLoading || isComposing) return;
 
+    const controller = new AbortController();
+    chatRequestControllerRef.current = controller;
     setIsChatLoading(true);
-    setChatInput(''); 
+    setChatInput('');
     if (textareaRef.current) {
       autoResizeTextarea(textareaRef.current);
     }
@@ -1057,9 +1061,12 @@ function MainDashboard() {
 
     try {
       const res = await axios.post(
-        '/api/aiagent/search', 
+        '/api/aiagent/search',
         { query },
-        { headers: { 'Authorization': `Bearer ${token}` } }
+        {
+          headers: { 'Authorization': `Bearer ${token}` },
+          signal: controller.signal,
+        }
       );
       
       const { answer, notion_page_url, notion_page_id } = res.data;
@@ -1074,6 +1081,9 @@ function MainDashboard() {
         },
       ]);
     } catch (err) {
+      if (err.code === 'ERR_CANCELED') {
+        return;
+      }
       console.error('AI Search Error:', err);
       let errorMessage = '답변을 생성하는 중 오류가 발생했습니다.';
       if (err.response) {
@@ -1091,7 +1101,16 @@ function MainDashboard() {
       ]);
     } finally {
       setIsChatLoading(false);
+      chatRequestControllerRef.current = null;
     }
+  };
+
+  const handleStopMessage = () => {
+    if (chatRequestControllerRef.current) {
+      chatRequestControllerRef.current.abort();
+      chatRequestControllerRef.current = null;
+    }
+    setIsChatLoading(false);
   };
 
   const handleKeyDown = (e) => {
@@ -1299,9 +1318,13 @@ function MainDashboard() {
                 </ToolbarLeft>
                 <ToolbarRight>
                   <span style={{fontSize: 12, color: '#718096'}}>Tokens 0/4000</span>
-                  <SendButton onClick={handleSendMessage} disabled={isChatLoading || isComposing}>
-                    <Send size={16} />
-                    전송
+                  <SendButton
+                    onClick={isChatLoading ? handleStopMessage : handleSendMessage}
+                    disabled={isComposing}
+                    $variant={isChatLoading ? 'stop' : 'send'}
+                  >
+                    {isChatLoading ? <Square size={16} /> : <Send size={16} />}
+                    {isChatLoading ? '정지' : '전송'}
                   </SendButton>
                 </ToolbarRight>
               </ChatToolbar>
