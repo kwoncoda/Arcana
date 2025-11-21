@@ -303,7 +303,8 @@ const DataSourceInfo = styled.div`
   gap: 10px;
   min-width: 0;
 
-  span {
+  /* 아이콘만 스타일 */
+  > span:first-child {
     width: 20px;
     height: 20px;
     border-radius: 4px;
@@ -313,6 +314,15 @@ const DataSourceInfo = styled.div`
     font-size: 12px;
     font-weight: 700;
     flex-shrink: 0;
+  }
+
+  /* 라벨은 남은 폭을 차지하며 줄임표 */
+  > span:last-child {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 `;
 
@@ -752,11 +762,6 @@ const getDisconnectEndpoint = (connection) => {
 
 const getProviderDetails = connection => {
   const providerKey = (connection?.type || connection?.name || '').toLowerCase();
-
-  // allow fuzzy matches so slightly malformed values (e.g. "otic" instead of "notion")
-  // still render with the intended branding
-  if (providerKey.includes('noti')) return providerDetails.notion;
-  if (providerKey.includes('google') && providerKey.includes('drive')) return providerDetails['google-drive'];
 
   const baseDetails = providerDetails[providerKey];
 
