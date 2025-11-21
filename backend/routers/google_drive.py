@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import RedirectResponse, JSONResponse
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
@@ -54,6 +54,8 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import os
 import shutil
+from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
+
 FRONT_MAIN_REDIRECT_URL=os.getenv("FRONT_MAIN_REDIRECT_URL")
 
 router = APIRouter(prefix="/google-drive", tags=["google-drive"])
@@ -232,6 +234,14 @@ def _ensure_google_resources(db: Session, *, user: User, workspace: Workspace) -
     return credential
 
 
+def _append_query_params(base_url: str, params: dict[str, str | None]) -> str:
+    parsed = urlparse(base_url)
+    current = dict(parse_qsl(parsed.query))
+    current.update({k: v for k, v in params.items() if v is not None})
+    new_query = urlencode(current)
+    return urlunparse(parsed._replace(query=new_query))
+
+
 @router.post(
     "/connect",
     status_code=status.HTTP_200_OK,
@@ -260,6 +270,7 @@ def ensure_google_drive_connection(
 )
 async def google_drive_oauth_callback(
     *,
+    request: Request,
     code: str | None = None,
     state: str | None = None,
     db: Session = Depends(get_db),
@@ -268,7 +279,7 @@ async def google_drive_oauth_callback(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="code/state 누락")
 
     try:
-        cred_idx, _uid = verify_state(state)
+        cred_idx, user_idx = verify_state(state)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -285,7 +296,37 @@ async def google_drive_oauth_callback(
         ) from exc
 
     apply_oauth_tokens(db, credential, token_payload, user_info, mark_connected=True)
-    return RedirectResponse(url=FRONT_MAIN_REDIRECT_URL)
+
+    sync_failed = False
+    sync_result = None
+    user = db.get(User, user_idx) if user_idx else None
+
+    if user:
+        try:
+            sync_result = await pull_google_drive_files(db=db, user=user)  # type: ignore[arg-type]
+        except Exception as exc:  # pragma: no cover - defensive
+            sync_failed = True
+            sync_result = {"error": str(exc)}
+
+    if "application/json" in request.headers.get("accept", "").lower():
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"connected": True, "sync_failed": sync_failed, "sync_result": sync_result},
+        )
+
+    if not FRONT_MAIN_REDIRECT_URL:
+        return {"connected": True, "sync_failed": sync_failed, "sync_result": sync_result}
+
+    redirect_url = _append_query_params(
+        FRONT_MAIN_REDIRECT_URL,
+        {
+            "source": "google-drive",
+            "connected": "1",
+            "syncFailed": "1" if sync_failed else "0",
+        },
+    )
+
+    return RedirectResponse(url=redirect_url)
 
 
 @router.post(

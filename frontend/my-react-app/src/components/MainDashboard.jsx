@@ -913,6 +913,33 @@ function MainDashboard() {
   }, [fetchConnections]);
 
   useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const connected = params.get('connected');
+    const source = params.get('source');
+    const syncFailed = params.get('syncFailed') === '1';
+
+    if (connected && source) {
+      if (source === 'notion') {
+        setSyncMessage({
+          variant: syncFailed ? 'warning' : 'success',
+          message: syncFailed
+            ? '노션 연동은 완료되었지만 지식 베이스 갱신 중 오류가 발생했습니다. 다시 시도해주세요.'
+            : '노션이 연동되었습니다.',
+        });
+      } else if (source === 'google-drive') {
+        setSyncMessage({
+          variant: syncFailed ? 'warning' : 'success',
+          message: syncFailed
+            ? 'Google Drive 연동은 완료되었지만 지식 베이스 갱신 중 오류가 발생했습니다. 다시 시도해주세요.'
+            : 'Google Drive가 연동되었습니다.',
+        });
+      }
+
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location, navigate]);
+
+  useEffect(() => {
     if (location.state?.notionConnected) {
       setSyncMessage({
         variant: location.state.notionSyncFailed ? 'warning' : 'success',
