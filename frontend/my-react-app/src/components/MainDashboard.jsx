@@ -863,8 +863,6 @@ function MainDashboard() {
   const textareaRef = useRef(null);
   const chatRequestControllerRef = useRef(null);
   
-  const [isComposing, setIsComposing] = useState(false);
-
   // [추가] 모바일 사이드바 상태
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
@@ -1098,7 +1096,7 @@ function MainDashboard() {
 
   const handleSendMessage = async () => {
     const query = chatInput.trim();
-    if (!query || isChatLoading || isComposing) return;
+    if (!query || isChatLoading) return;
 
     const controller = new AbortController();
     chatRequestControllerRef.current = controller;
@@ -1171,8 +1169,8 @@ function MainDashboard() {
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey && !isComposing) {
-      e.preventDefault(); 
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
       handleSendMessage();
     }
   };
@@ -1421,10 +1419,8 @@ function MainDashboard() {
                 placeholder="조직에서 궁금한 점들을 질문해보세요..."
                 value={chatInput}
                 onChange={handleTextareaChange}
-                onKeyDown={handleKeyDown} 
-                rows={1} 
-                onCompositionStart={() => setIsComposing(true)} 
-                onCompositionEnd={() => setIsComposing(false)} 
+                onKeyDown={handleKeyDown}
+                rows={1}
               />
               <ChatToolbar>
                 <ToolbarLeft>
@@ -1436,7 +1432,6 @@ function MainDashboard() {
                   <span style={{fontSize: 12, color: '#718096'}}>Tokens 0/4000</span>
                   <SendButton
                     onClick={isChatLoading ? handleStopMessage : handleSendMessage}
-                    disabled={isComposing}
                     $variant={isChatLoading ? 'stop' : 'send'}
                   >
                     {isChatLoading ? <Square size={16} /> : <Send size={16} />}
