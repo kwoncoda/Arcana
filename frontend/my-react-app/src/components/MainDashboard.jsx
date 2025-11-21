@@ -9,9 +9,10 @@ import {
   Settings, 
   Plus, 
   RefreshCw,
-  ChevronDown, 
-  User, 
-  Send, 
+  ChevronDown,
+  User,
+  Send,
+  Square,
   Paperclip,
   Activity,
   FileText,
@@ -293,8 +294,18 @@ const SectionTitle = styled.h3`
 
 const DataSourceItem = styled(NavItem)`
   color: #A0AEC0;
-  
-  span {
+  justify-content: space-between;
+  gap: 12px;
+`;
+
+const DataSourceInfo = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+
+  /* 아이콘만 스타일 */
+  > span:first-child {
     width: 20px;
     height: 20px;
     border-radius: 4px;
@@ -303,6 +314,40 @@ const DataSourceItem = styled(NavItem)`
     justify-content: center;
     font-size: 12px;
     font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  /* 라벨은 남은 폭을 차지하며 줄임표 */
+  > span:last-child {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+`;
+
+const DisconnectButton = styled.button`
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: #CBD5E0;
+  cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: #F56565;
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 `;
 
@@ -624,7 +669,7 @@ const ToolbarRight = styled.div`
 `;
 
 const SendButton = styled.button`
-  background-color: #6200EE;
+  background-color: ${({ $variant }) => ($variant === 'stop' ? '#E53E3E' : '#6200EE')};
   color: white;
   border: none;
   border-radius: 6px;
@@ -637,7 +682,7 @@ const SendButton = styled.button`
   font-weight: 500;
 
   &:hover {
-    background-color: #5100C4;
+    background-color: ${({ $variant }) => ($variant === 'stop' ? '#C53030' : '#5100C4')};
   }
 
   &:disabled {
@@ -705,8 +750,20 @@ const providerDetails = {
   "google-drive": { name: 'Google Drive', icon: 'G', color: '#1A73E8', bg: '#E8F0FE' },
 };
 
+const getDisconnectEndpoint = (connection) => {
+  const providerKey = (connection?.type || connection?.name || '').toLowerCase();
+
+  if (providerKey === 'notion') return '/api/notion/disconnect';
+  if (providerKey === 'googledrive' || providerKey === 'google-drive' || providerKey === 'google_drive') {
+    return '/api/google-drive/disconnect';
+  }
+
+  return null;
+};
+
 const getProviderDetails = connection => {
   const providerKey = (connection?.type || connection?.name || '').toLowerCase();
+
   const baseDetails = providerDetails[providerKey];
 
   if (baseDetails) {
@@ -791,6 +848,7 @@ function MainDashboard() {
   const [chatInput, setChatInput] = useState('');
   const [connections, setConnections] = useState([]);
   const [loadingConnections, setLoadingConnections] = useState(true);
+  const [disconnectingSource, setDisconnectingSource] = useState(null);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState(null);
   const navigate = useNavigate();
@@ -799,10 +857,11 @@ function MainDashboard() {
   const [userNickname, setUserNickname] = useState('User');
   const [userInitials, setUserInitials] = useState('U');
 
-  const [chatMessages, setChatMessages] = useState([]); 
-  const [isChatLoading, setIsChatLoading] = useState(false); 
-  const chatContainerRef = useRef(null); 
-  const textareaRef = useRef(null); 
+  const [chatMessages, setChatMessages] = useState([]);
+  const [isChatLoading, setIsChatLoading] = useState(false);
+  const chatContainerRef = useRef(null);
+  const textareaRef = useRef(null);
+  const chatRequestControllerRef = useRef(null);
   
   const [isComposing, setIsComposing] = useState(false);
 
@@ -1041,8 +1100,10 @@ function MainDashboard() {
     const query = chatInput.trim();
     if (!query || isChatLoading || isComposing) return;
 
+    const controller = new AbortController();
+    chatRequestControllerRef.current = controller;
     setIsChatLoading(true);
-    setChatInput(''); 
+    setChatInput('');
     if (textareaRef.current) {
       autoResizeTextarea(textareaRef.current);
     }
@@ -1057,9 +1118,12 @@ function MainDashboard() {
 
     try {
       const res = await axios.post(
-        '/api/aiagent/search', 
+        '/api/aiagent/search',
         { query },
-        { headers: { 'Authorization': `Bearer ${token}` } }
+        {
+          headers: { 'Authorization': `Bearer ${token}` },
+          signal: controller.signal,
+        }
       );
       
       const { answer, notion_page_url, notion_page_id } = res.data;
@@ -1074,6 +1138,9 @@ function MainDashboard() {
         },
       ]);
     } catch (err) {
+      if (err.code === 'ERR_CANCELED') {
+        return;
+      }
       console.error('AI Search Error:', err);
       let errorMessage = '답변을 생성하는 중 오류가 발생했습니다.';
       if (err.response) {
@@ -1091,7 +1158,16 @@ function MainDashboard() {
       ]);
     } finally {
       setIsChatLoading(false);
+      chatRequestControllerRef.current = null;
     }
+  };
+
+  const handleStopMessage = () => {
+    if (chatRequestControllerRef.current) {
+      chatRequestControllerRef.current.abort();
+      chatRequestControllerRef.current = null;
+    }
+    setIsChatLoading(false);
   };
 
   const handleKeyDown = (e) => {
@@ -1114,20 +1190,79 @@ function MainDashboard() {
     document.body.removeChild(textArea);
   };
 
+  const handleDisconnectConnection = async (event, connection) => {
+    event?.stopPropagation?.();
+
+    const details = getProviderDetails(connection);
+    const endpoint = getDisconnectEndpoint(connection);
+
+    if (!endpoint) {
+      alert('이 데이터 소스는 아직 연결 해제를 지원하지 않습니다.');
+      return;
+    }
+
+    const confirmMessage = `${details.name} 데이터 소스 연결을 끊으시겠습니까?`;
+    const shouldDisconnect = window.confirm(confirmMessage);
+    if (!shouldDisconnect) return;
+
+    const token = localStorage.getItem('accessToken');
+    if (!token) {
+      navigate('/login');
+      return;
+    }
+
+    try {
+      setDisconnectingSource(connection?.type || details.name);
+      await axios.post(endpoint, {}, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      await fetchConnections(token);
+    } catch (err) {
+      console.error('Failed to disconnect data source:', err);
+      const status = err?.response?.status;
+      if (status === 401 || status === 404) {
+        navigate('/login');
+        return;
+      }
+
+      const detail = err?.response?.data?.detail;
+      alert(detail ? `연결 해제에 실패했습니다: ${detail}` : '연결 해제에 실패했습니다. 잠시 후 다시 시도해주세요.');
+    } finally {
+      setDisconnectingSource(null);
+    }
+  };
+
   const renderConnectionItem = (conn) => {
     const details = getProviderDetails(conn);
-    
+    const itemKey = conn.type || details.name;
+    const isDisconnecting = disconnectingSource === itemKey;
+
     if (conn.status === 'connected' || conn.connected === true) {
       return (
-        <DataSourceItem key={conn.type || details.name}>
-          <span style={{ color: details.color, backgroundColor: details.bg }}>
-            {details.icon}
-          </span>
-          {details.name}
+        <DataSourceItem key={itemKey}>
+          <DataSourceInfo>
+            <span style={{ color: details.color, backgroundColor: details.bg }}>
+              {details.icon}
+            </span>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {details.name}
+            </span>
+          </DataSourceInfo>
+          <DisconnectButton
+            aria-label={`${details.name} 연결 끊기`}
+            title="연결 끊기"
+            onClick={(event) => handleDisconnectConnection(event, conn)}
+            disabled={isDisconnecting}
+          >
+            {isDisconnecting ? '…' : <X size={14} />}
+          </DisconnectButton>
         </DataSourceItem>
       );
     }
-    return null; 
+    return null;
   };
 
   return (
@@ -1299,9 +1434,13 @@ function MainDashboard() {
                 </ToolbarLeft>
                 <ToolbarRight>
                   <span style={{fontSize: 12, color: '#718096'}}>Tokens 0/4000</span>
-                  <SendButton onClick={handleSendMessage} disabled={isChatLoading || isComposing}>
-                    <Send size={16} />
-                    전송
+                  <SendButton
+                    onClick={isChatLoading ? handleStopMessage : handleSendMessage}
+                    disabled={isComposing}
+                    $variant={isChatLoading ? 'stop' : 'send'}
+                  >
+                    {isChatLoading ? <Square size={16} /> : <Send size={16} />}
+                    {isChatLoading ? '정지' : '전송'}
                   </SendButton>
                 </ToolbarRight>
               </ChatToolbar>
