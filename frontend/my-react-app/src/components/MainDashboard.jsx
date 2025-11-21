@@ -752,6 +752,12 @@ const getDisconnectEndpoint = (connection) => {
 
 const getProviderDetails = connection => {
   const providerKey = (connection?.type || connection?.name || '').toLowerCase();
+
+  // allow fuzzy matches so slightly malformed values (e.g. "otic" instead of "notion")
+  // still render with the intended branding
+  if (providerKey.includes('noti')) return providerDetails.notion;
+  if (providerKey.includes('google') && providerKey.includes('drive')) return providerDetails['google-drive'];
+
   const baseDetails = providerDetails[providerKey];
 
   if (baseDetails) {
