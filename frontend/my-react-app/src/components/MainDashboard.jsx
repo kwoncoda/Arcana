@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import styled, { keyframes } from 'styled-components';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
 import axios from 'axios';
 import { 
   Home, 
@@ -852,6 +852,7 @@ function MainDashboard() {
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState(null);
   const navigate = useNavigate();
+  const location = useLocation();
 
   // 닉네임/이니셜 state
   const [userNickname, setUserNickname] = useState('User');
@@ -907,9 +908,32 @@ function MainDashboard() {
       setUserNickname(nickname);
       setUserInitials(getInitials(nickname));
     }
-    
+
     fetchConnections().catch(() => {});
   }, [fetchConnections]);
+
+  useEffect(() => {
+    if (location.state?.notionConnected) {
+      setSyncMessage({
+        variant: location.state.notionSyncFailed ? 'warning' : 'success',
+        message: location.state.notionSyncFailed
+          ? '노션 연동은 완료되었지만 지식 베이스 갱신 중 오류가 발생했습니다. 다시 시도해주세요.'
+          : '노션이 연동되었습니다.',
+      });
+      navigate(location.pathname, { replace: true, state: {} });
+      return;
+    }
+
+    if (location.state?.googleConnected) {
+      setSyncMessage({
+        variant: location.state.googleSyncFailed ? 'warning' : 'success',
+        message: location.state.googleSyncFailed
+          ? 'Google Drive 연동은 완료되었지만 지식 베이스 갱신 중 오류가 발생했습니다. 다시 시도해주세요.'
+          : 'Google Drive가 연동되었습니다.',
+      });
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location, navigate]);
 
   useEffect(() => {
     if (chatContainerRef.current) {

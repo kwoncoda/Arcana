@@ -8,8 +8,7 @@ import RegisterPage from './components/RegisterPage';
 import MainDashboard from './components/MainDashboard';
 import NotionConnectPage from './components/NotionConnectPage';
 import NotionOAuthCallback from './components/NotionOAuthCallback';
-// 1. 
-// import GoogleOAuthCallback from './components/GoogleOAuthCallback'; 
+import GoogleOAuthCallback from './components/GoogleOAuthCallback';
 import MyPage from './components/MyPage';
 
 function App() {
@@ -27,16 +26,14 @@ function App() {
       <Route path="/dashboard" element={<MainDashboard />} />
       
       {/* OAuth 콜백 페이지들은 레이아웃이 없는 독립 페이지 */}
-      <Route 
-        path="/notion/oauth/callback" 
-        element={<NotionOAuthCallback />} 
+      <Route
+        path="/notion/oauth/callback"
+        element={<NotionOAuthCallback />}
       />
-      {/* 2. 
-      <Route 
-        path="/google-drive/oauth/callback" 
-        element={<GoogleOAuthCallback />} 
+      <Route
+        path="/google-drive/oauth/callback"
+        element={<GoogleOAuthCallback />}
       />
-      */}
       
       {/* 기본 및 예외 경로 */}
       <Route path="/" element={<Navigate to="/login" replace />} />
