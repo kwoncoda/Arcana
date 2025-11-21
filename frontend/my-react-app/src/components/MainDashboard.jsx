@@ -7,7 +7,7 @@ import {
   MessageSquare, 
   Database, 
   Settings, 
-  Plus,
+  Plus, 
   RefreshCw,
   ChevronDown, 
   User, 
@@ -19,8 +19,30 @@ import {
   CheckCircle,
   HelpCircle,
   Brain,
-  Copy
+  Copy,
+  Menu, // [추가] 햄버거 아이콘
+  X     // [추가] 닫기 아이콘
 } from 'lucide-react';
+
+// --- 스트리밍 효과를 위한 커스텀 훅 ---
+function useInterval(callback, delay) {
+  const savedCallback = useRef();
+
+  useEffect(() => {
+    savedCallback.current = callback;
+  }, [callback]);
+
+  useEffect(() => {
+    function tick() {
+      savedCallback.current();
+    }
+    if (delay !== null) {
+      let id = setInterval(tick, delay);
+      return () => clearInterval(id);
+    }
+  }, [delay]);
+}
+
 
 // --- Layout Containers ---
 
@@ -29,8 +51,10 @@ const DashboardContainer = styled.div`
   width: 100%;
   height: 100vh;
   background-color: #F9FAFB;
+  position: relative; /* 모바일 오버레이를 위해 relative */
 `;
 
+// [수정] 모바일 반응형 사이드바 스타일 적용
 const Sidebar = styled.nav`
   width: 260px;
   background-color: #1F2328; 
@@ -39,10 +63,32 @@ const Sidebar = styled.nav`
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  transition: transform 0.3s ease-in-out;
 
-  /* --- 768px 이하면 사이드바 숨김 --- */
+  /* 모바일: 기본 숨김($isOpen false) -> 슬라이드 등작($isOpen true) */
   @media (max-width: 768px) {
-    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    z-index: 1000;
+    transform: ${({ $isOpen }) => ($isOpen ? 'translateX(0)' : 'translateX(-100%)')};
+    box-shadow: ${({ $isOpen }) => ($isOpen ? '4px 0 15px rgba(0,0,0,0.5)' : 'none')};
+  }
+`;
+
+// [추가] 모바일 오버레이 (배경 어둡게)
+const MobileOverlay = styled.div`
+  display: none;
+  @media (max-width: 768px) {
+    display: ${({ $isOpen }) => ($isOpen ? 'block' : 'none')};
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: 999;
   }
 `;
 
@@ -62,6 +108,29 @@ const TopBar = styled.header`
   border-bottom: 1px solid #E2E8F0;
   height: 70px;
   flex-shrink: 0;
+`;
+
+// [추가] 모바일 메뉴 버튼
+const MobileMenuBtn = styled.button`
+  display: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #4A5568;
+  margin-right: 12px;
+  padding: 4px;
+
+  @media (max-width: 768px) {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+`;
+
+// [추가] 상단 좌측 그룹 (메뉴 버튼 + 헤더)
+const TopBarLeftGroup = styled.div`
+  display: flex;
+  align-items: center;
 `;
 
 const TopBarActions = styled.div`
@@ -93,6 +162,14 @@ const RefreshButton = styled.button`
     opacity: 0.65;
     background-color: #E2E8F0;
   }
+
+  /* 모바일에서는 텍스트 숨김 */
+  @media (max-width: 500px) {
+    span {
+      display: none;
+    }
+    padding: 8px;
+  }
 `;
 
 const SYNC_STATUS_COLORS = {
@@ -119,7 +196,7 @@ const ChatWrapper = styled.div`
   flex-direction: column;
   overflow: hidden;
   background-color: #FFFFFF;
-  min-width: 300px; 
+  min-width: 0;
 `;
 
 const AnalyticsSidebar = styled.aside`
@@ -130,7 +207,6 @@ const AnalyticsSidebar = styled.aside`
   overflow-y: auto;
   border-left: 1px solid #E2E8F0;
 
-  /* --- 1280px 이하면 분석 사이드바 숨김 --- */
   @media (max-width: 1280px) {
     display: none;
   }
@@ -139,9 +215,30 @@ const AnalyticsSidebar = styled.aside`
 
 // --- Sidebar Components ---
 
-const LogoHeader = styled.div`
-  padding: 0 8px;
+// [추가] 사이드바 헤더 (로고 + 닫기 버튼)
+const SidebarHeaderRow = styled.div`
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   margin-bottom: 24px;
+  padding: 0 8px;
+`;
+
+// [추가] 사이드바 닫기 버튼
+const SidebarCloseBtn = styled.button`
+  display: none;
+  background: none;
+  border: none;
+  color: #A0AEC0;
+  cursor: pointer;
+  
+  @media (max-width: 768px) {
+    display: block;
+  }
+`;
+
+const LogoHeader = styled.div`
+  /* SidebarHeaderRow 사용으로 인해 margin 제거 */
 `;
 
 const LogoText = styled.h1`
@@ -246,7 +343,6 @@ const TopBarHeader = styled.div`
     color: #718096;
     margin: 4px 0 0 0;
 
-    /* 500px 이하 숨김 */
     @media (max-width: 500px) {
       display: none;
     }
@@ -258,7 +354,6 @@ const TopBarStats = styled.div`
   align-items: center;
   gap: 24px;
 
-  /* --- 1024px 이하 숨김 --- */
   @media (max-width: 1024px) {
     display: none;
   }
@@ -360,14 +455,15 @@ const MessageBubble = styled.div`
   padding: 12px 16px;
   border-radius: 12px;
   font-size: 14px;
-  line-height: 1.6;
-  white-space: pre-wrap;
+  word-wrap: break-word;
 `;
 
 const UserMessageBubble = styled(MessageBubble)`
   background-color: #6200EE;
   color: white;
   border-top-right-radius: 0;
+  line-height: 1.6;
+  white-space: pre-wrap;
 `;
 
 const AIMessageBubble = styled(MessageBubble)`
@@ -378,12 +474,25 @@ const AIMessageBubble = styled(MessageBubble)`
   position: relative;
 `;
 
+const AIMessageContent = styled.div`
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+`;
+
+const StyledHr = styled.hr`
+  border: none;
+  border-top: 1px solid #E2E8F0;
+  margin: 12px 0;
+`;
+
 const MessageToolbar = styled.div`
   display: flex;
   justify-content: flex-end;
-  margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px solid #E2E8F0;
+  align-items: center;
+  margin-top: 8px;
+  gap: 16px;
 `;
 
 const CopyButton = styled.button`
@@ -406,8 +515,7 @@ const SourceLink = styled.a`
   font-size: 12px;
   color: #4299E1;
   text-decoration: none;
-  display: block;
-  margin-top: 8px;
+  margin-right: auto;
   &:hover { text-decoration: underline; }
 `;
 
@@ -616,16 +724,64 @@ const getProviderDetails = connection => {
   };
 };
 
-// 닉네임 이니셜 생성 헬퍼 함수
 const getInitials = (name) => {
   if (!name) return 'U';
   const parts = name.trim().split(' ');
-  // "Gildong Hong" -> "GH"
   if (parts.length > 1 && parts[parts.length - 1]) {
     return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   }
-  // "Gildong" -> "G"
   return name[0].toUpperCase();
+};
+
+// --- 스트리밍 메시지 컴포넌트 ---
+const StreamingAIMessage = ({ content, sourcePage, sourceId, isError, onCopy }) => {
+  const [displayedText, setDisplayedText] = useState('');
+  const [isComplete, setIsComplete] = useState(false);
+  const streamDelay = 30;
+
+  useInterval(() => {
+    if (isComplete || isError) {
+      return;
+    }
+
+    if (displayedText.length < content.length) {
+      setDisplayedText(content.substring(0, displayedText.length + 1));
+    } else {
+      setIsComplete(true);
+    }
+  }, streamDelay);
+
+  useEffect(() => {
+    if (isError) {
+      setDisplayedText(content);
+      setIsComplete(true);
+    }
+  }, [isError, content]);
+
+  return (
+    <AIMessageBubble style={isError ? {borderColor: '#FEB2B2', backgroundColor: '#FFF5F5'} : {}}>
+      <AIMessageContent>
+        {displayedText}
+        {!isComplete && !isError && <span className="cursor" style={{borderRight: '2px solid #6200EE', marginLeft: '2px', animation: 'blink 1s step-end infinite'}}></span>}
+      </AIMessageContent>
+      
+      {isComplete && !isError && (sourcePage || content) && (
+        <>
+          <StyledHr />
+          <MessageToolbar>
+            {sourcePage && (
+              <SourceLink href={sourcePage} target="_blank" rel="noopener noreferrer">
+                출처: {sourceId || 'Notion Page'}
+              </SourceLink>
+            )}
+            <CopyButton onClick={() => onCopy(content)}>
+              <Copy size={14} /> 복사
+            </CopyButton>
+          </MessageToolbar>
+        </>
+      )}
+    </AIMessageBubble>
+  );
 };
 
 
@@ -639,7 +795,7 @@ function MainDashboard() {
   const [syncMessage, setSyncMessage] = useState(null);
   const navigate = useNavigate();
 
-  // 1. 닉네임/이니셜 state 추가
+  // 닉네임/이니셜 state
   const [userNickname, setUserNickname] = useState('User');
   const [userInitials, setUserInitials] = useState('U');
 
@@ -648,8 +804,10 @@ function MainDashboard() {
   const chatContainerRef = useRef(null); 
   const textareaRef = useRef(null); 
   
-  // 2. 한글 입력 버그 수정을 위한 state
   const [isComposing, setIsComposing] = useState(false);
+
+  // [추가] 모바일 사이드바 상태
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
   const fetchConnections = useCallback(async (tokenOverride) => {
     setLoadingConnections(true);
@@ -675,7 +833,7 @@ function MainDashboard() {
       if (status === 401 || status === 404) {
         localStorage.removeItem('accessToken');
         localStorage.removeItem('refreshToken');
-        localStorage.removeItem('userNickname'); // 닉네임도 함께 삭제
+        localStorage.removeItem('userNickname');
         navigate('/login');
       }
       throw err;
@@ -685,7 +843,6 @@ function MainDashboard() {
   }, [navigate]);
 
   useEffect(() => {
-    // 3. 페이지 로드 시 닉네임 불러오기
     const nickname = localStorage.getItem('userNickname');
     if (nickname) {
       setUserNickname(nickname);
@@ -695,14 +852,12 @@ function MainDashboard() {
     fetchConnections().catch(() => {});
   }, [fetchConnections]);
 
-  // 5. 채팅창 스크롤 맨 아래로 이동
   useEffect(() => {
     if (chatContainerRef.current) {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
   }, [chatMessages, isChatLoading]);
 
-  // 6. Textarea 높이 자동 조절
   const autoResizeTextarea = (element) => {
     element.style.height = 'auto'; 
     element.style.height = `${element.scrollHeight}px`; 
@@ -713,10 +868,21 @@ function MainDashboard() {
     autoResizeTextarea(e.target);
   };
 
-  // 4. handleLogout 함수는 MyPage.jsx로 이동했으므로 여기서는 삭제됨.
+  // [수정] 로그아웃 로직 제거 (MyPage에서 처리)
+
+  // [추가] 사이드바 토글 함수
+  const toggleMobileSidebar = () => {
+    setIsMobileSidebarOpen(!isMobileSidebarOpen);
+  };
+
+  // [추가] 사이드바 메뉴 클릭 시 닫기
+  const handleNavClick = () => {
+    if (window.innerWidth <= 768) {
+      setIsMobileSidebarOpen(false);
+    }
+  };
 
   const handleRefreshKnowledge = async () => {
-    // ... (기존 갱신 로직)
     if (syncing) return;
 
     const token = localStorage.getItem('accessToken');
@@ -784,9 +950,16 @@ function MainDashboard() {
         const type = (source?.type || '').toLowerCase();
         const displayName = source?.name || source?.type || 'Unknown';
 
-        if (type === 'notion') {
+        if (type === 'notion' || type === 'google-drive') {
+          let pullEndpoint = '';
+          if (type === 'notion') {
+            pullEndpoint = '/api/notion/pages/pull';
+          } else if (type === 'google-drive') {
+            pullEndpoint = '/api/google-drive/files/pull';
+          }
+
           try {
-            const response = await axios.post('/api/notion/pages/pull', {}, { headers });
+            const response = await axios.post(pullEndpoint, {}, { headers });
             const ingested = response?.data?.ingested_chunks;
             if (typeof ingested === 'number') {
               successMessages.push(`${displayName}: ${ingested}개 청크 갱신`);
@@ -799,7 +972,7 @@ function MainDashboard() {
               unauthorizedDetected = true;
               localStorage.removeItem('accessToken');
               localStorage.removeItem('refreshToken');
-              localStorage.removeItem('userNickname'); // 닉네임 삭제
+              localStorage.removeItem('userNickname');
               navigate('/login');
               failureMessages.push(`${displayName}: 인증이 만료되었습니다. 다시 로그인해주세요.`);
             } else {
@@ -864,10 +1037,8 @@ function MainDashboard() {
     }
   };
 
-  // 7. 메시지 전송 핸들러
   const handleSendMessage = async () => {
     const query = chatInput.trim();
-    // 5. isComposing 확인
     if (!query || isChatLoading || isComposing) return;
 
     setIsChatLoading(true);
@@ -923,16 +1094,13 @@ function MainDashboard() {
     }
   };
 
-  // 8. Enter / Shift+Enter 키 처리
   const handleKeyDown = (e) => {
-    // 6. isComposing 아닐 때만 전송
     if (e.key === 'Enter' && !e.shiftKey && !isComposing) {
       e.preventDefault(); 
       handleSendMessage();
     }
   };
 
-  // 9. 복사 버튼 핸들러
   const handleCopy = (text) => {
     const textArea = document.createElement('textarea');
     textArea.value = text;
@@ -965,17 +1133,28 @@ function MainDashboard() {
   return (
     <DashboardContainer>
       
-      {/* --- 1. Sidebar (Left) --- */}
-      <Sidebar>
-        <LogoHeader>
+      {/* [추가] 모바일 오버레이 */}
+      <MobileOverlay $isOpen={isMobileSidebarOpen} onClick={toggleMobileSidebar} />
+
+      {/* [수정] Sidebar에 isOpen prop 전달 */}
+      <Sidebar $isOpen={isMobileSidebarOpen}>
+        {/* [추가] 사이드바 헤더 로우 (로고 + 닫기 버튼) */}
+        <SidebarHeaderRow>
           <LogoText><Brain size={24} /> Arcana</LogoText>
+          <SidebarCloseBtn onClick={toggleMobileSidebar}>
+            <X size={24} />
+          </SidebarCloseBtn>
+        </SidebarHeaderRow>
+
+        <LogoHeader>
           <Subtitle>정보 파편화의 해결자 플랫폼</Subtitle>
         </LogoHeader>
 
         <NavMenu>
           <SectionTitle>MAIN DASHBOARD</SectionTitle>
-          <NavItem><Home size={18} /> 메인화면</NavItem>
-          <NavItem><MessageSquare size={18} /> AI 채팅 인터페이스</NavItem>
+          {/* [수정] 모바일에서 클릭 시 사이드바 닫히도록 handleNavClick 추가 */}
+          <NavItem onClick={handleNavClick}><Home size={18} /> 메인화면</NavItem>
+          <NavItem onClick={handleNavClick}><MessageSquare size={18} /> AI 채팅 인터페이스</NavItem>
 
           <SectionTitle>DATA SOURCES</SectionTitle>
           
@@ -989,7 +1168,7 @@ function MainDashboard() {
             </EmptyDataSource>
           )}
 
-          <NavItem as={Link} to="/connect/notion">
+          <NavItem as={Link} to="/connect/notion" onClick={handleNavClick}>
             <Plus size={18} /> Add more sources
           </NavItem>
         </NavMenu>
@@ -1001,14 +1180,18 @@ function MainDashboard() {
         </UpgradeBanner>
       </Sidebar>
 
-      {/* --- 2. Main Content (Center) --- */}
       <MainContent>
-        {/* 2.1 TopBar */}
         <TopBar>
-          <TopBarHeader>
-            <h2>Arcana AI 정보 어시턴트</h2>
-            <p>조직의 지식에 기반하여 궁금증을 질문해보세요</p>
-          </TopBarHeader>
+          <TopBarLeftGroup>
+            {/* [추가] 햄버거 메뉴 버튼 */}
+            <MobileMenuBtn onClick={toggleMobileSidebar}>
+              <Menu size={24} />
+            </MobileMenuBtn>
+            <TopBarHeader>
+              <h2>Arcana AI 정보 어시턴트</h2>
+              <p>조직의 지식에 기반하여 궁금증을 질문해보세요</p>
+            </TopBarHeader>
+          </TopBarLeftGroup>
 
           <TopBarStats>
             <StatItem>
@@ -1030,9 +1213,9 @@ function MainDashboard() {
           <TopBarActions>
             <RefreshButton onClick={handleRefreshKnowledge} disabled={syncing}>
               <RefreshCw size={16} />
-              {syncing ? '갱신 중...' : '지식 베이스 갱신'}
+              <span>{syncing ? '갱신 중...' : '지식 베이스 갱신'}</span>
             </RefreshButton>
-            {/* 7. 닉네임/이니셜 동적 적용 및 /mypage로 이동 */}
+            {/* [수정] 마이페이지로 이동 */}
             <UserProfile onClick={() => navigate('/mypage')}>
               <div className="avatar">{userInitials}</div>
               <div className="user-info">
@@ -1049,14 +1232,11 @@ function MainDashboard() {
           </SyncStatusBar>
         )}
 
-        {/* 2.2 Chat Area & Analytics Area */}
         <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
           
-          {/* 2.2.1 Chat Wrapper (Center) */}
           <ChatWrapper>
             <ChatContainer ref={chatContainerRef}>
               
-              {/* 10. 채팅 메시지 렌더링 */}
               {chatMessages.length === 0 ? (
                 <WelcomeMessage>
                   <h3>안녕하세요! Arcana AI Assistant입니다.</h3>
@@ -1076,28 +1256,18 @@ function MainDashboard() {
                     {msg.role === 'user' ? (
                       <UserMessageBubble>{msg.content}</UserMessageBubble>
                     ) : (
-                      <AIMessageBubble style={msg.isError ? {borderColor: '#FEB2B2', backgroundColor: '#FFF5F5'} : {}}>
-                        {msg.content}
-                        {/* 11. 소스 링크 및 복사 버튼 (에러 아닐 때) */}
-                        {!msg.isError && (
-                          <MessageToolbar>
-                            {msg.sourcePage && (
-                              <SourceLink href={msg.sourcePage} target="_blank" rel="noopener noreferrer">
-                                출처: {msg.sourceId || 'Notion Page'}
-                              </SourceLink>
-                            )}
-                            <CopyButton onClick={() => handleCopy(msg.content)}>
-                              <Copy size={14} /> 복사
-                            </CopyButton>
-                          </MessageToolbar>
-                        )}
-                      </AIMessageBubble>
+                      <StreamingAIMessage
+                        content={msg.content}
+                        sourcePage={msg.sourcePage}
+                        sourceId={msg.sourceId}
+                        isError={msg.isError}
+                        onCopy={handleCopy}
+                      />
                     )}
                   </MessageWrapper>
                 ))
               )}
 
-              {/* 12. AI 응답 로딩 중 표시 */}
               {isChatLoading && (
                 <MessageWrapper $role="ai">
                   <MessageHeader>Arcana AI</MessageHeader>
@@ -1118,8 +1288,8 @@ function MainDashboard() {
                 onChange={handleTextareaChange}
                 onKeyDown={handleKeyDown} 
                 rows={1} 
-                onCompositionStart={() => setIsComposing(true)} // 8. 한글 입력 시작
-                onCompositionEnd={() => setIsComposing(false)} // 9. 한글 입력 완료
+                onCompositionStart={() => setIsComposing(true)} 
+                onCompositionEnd={() => setIsComposing(false)} 
               />
               <ChatToolbar>
                 <ToolbarLeft>
@@ -1129,7 +1299,6 @@ function MainDashboard() {
                 </ToolbarLeft>
                 <ToolbarRight>
                   <span style={{fontSize: 12, color: '#718096'}}>Tokens 0/4000</span>
-                  {/* 10. 전송 버튼 disabled 조건 추가 */}
                   <SendButton onClick={handleSendMessage} disabled={isChatLoading || isComposing}>
                     <Send size={16} />
                     전송
@@ -1139,7 +1308,6 @@ function MainDashboard() {
             </ChatInputArea>
           </ChatWrapper>
 
-          {/* 2.2.2 Analytics Sidebar (Right) */}
           <AnalyticsSidebar>
             <AnalyticsCard>
               <h3>ANALYTICS</h3>
