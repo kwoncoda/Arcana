@@ -160,13 +160,18 @@ function NotionConnectPage() {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [googleError, setGoogleError] = useState(null);
   const [successMessage, setSuccessMessage] = useState('');
+  const [googleSuccessMessage, setGoogleSuccessMessage] = useState('');
   const [syncWarning, setSyncWarning] = useState('');
+  const [notionConnected, setNotionConnected] = useState(false);
+  const [googleConnected, setGoogleConnected] = useState(false);
+  const [checkingStatus, setCheckingStatus] = useState(true);
   const location = useLocation();
   const navigate = useNavigate();
 
   useEffect(() => {
     if (location.state?.notionConnected) {
       setSuccessMessage('노션이 연동되었습니다.');
+      setNotionConnected(true);
       if (location.state.notionSyncFailed) {
         setSyncWarning('연동은 완료되었지만 지식 베이스 갱신 중 오류가 발생했습니다. 다시 시도해주세요.');
       }
@@ -175,6 +180,49 @@ function NotionConnectPage() {
       navigate('.', { replace: true, state: {} });
     }
   }, [location.state, navigate]);
+
+  useEffect(() => {
+    const token = localStorage.getItem('accessToken');
+    if (!token) {
+      setCheckingStatus(false);
+      return;
+    }
+
+    const fetchStatus = async () => {
+      try {
+        const [notionRes, googleRes] = await Promise.all([
+          axios.get('/api/notion/status', {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Accept': 'application/json'
+            }
+          }),
+          axios.get('/api/google-drive/status', {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Accept': 'application/json'
+            }
+          })
+        ]);
+
+        if (notionRes.data?.connected) {
+          setNotionConnected(true);
+          setSuccessMessage('노션이 연동되었습니다.');
+        }
+
+        if (googleRes.data?.connected) {
+          setGoogleConnected(true);
+          setGoogleSuccessMessage('Google Drive가 연동되었습니다.');
+        }
+      } catch (err) {
+        console.error('Failed to load connection status:', err);
+      } finally {
+        setCheckingStatus(false);
+      }
+    };
+
+    fetchStatus();
+  }, []);
 
   const handleSubmit = async () => {
     setLoading(true);
@@ -304,9 +352,9 @@ function NotionConnectPage() {
             '연동 시작하기' 버튼을 누르면 Notion 권한 동의 페이지로 이동합니다.
           </Description>
 
-          <Button onClick={handleSubmit} disabled={loading}>
+          <Button onClick={handleSubmit} disabled={loading || checkingStatus || notionConnected}>
             <ButtonLogo src={notionLogo} alt="Notion 로고" />
-            Notion 연동 시작하기
+            {notionConnected ? 'Notion 연동 완료' : 'Notion 연동 시작하기'}
           </Button>
 
           {successMessage && <SuccessMessage>{successMessage}</SuccessMessage>}
@@ -321,11 +369,12 @@ function NotionConnectPage() {
             '연동 시작하기' 버튼을 누르면 Google 계정 선택 및 권한 동의 페이지로 이동합니다.
           </Description>
 
-          <GoogleButton onClick={handleGoogleConnect} disabled={googleLoading}>
+          <GoogleButton onClick={handleGoogleConnect} disabled={googleLoading || checkingStatus || googleConnected}>
             <ProviderBadge bg="#E8F0FE" color="#1A73E8">G</ProviderBadge>
-            Google Drive 연동 시작하기
+            {googleConnected ? 'Google Drive 연동 완료' : 'Google Drive 연동 시작하기'}
           </GoogleButton>
 
+          {googleSuccessMessage && <SuccessMessage>{googleSuccessMessage}</SuccessMessage>}
           {googleError && <ErrorMessage>{googleError}</ErrorMessage>}
         </ContentBox>
       </IntegrationGrid>

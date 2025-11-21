@@ -264,6 +264,49 @@ def ensure_google_drive_connection(
 
 
 @router.get(
+    "/status",
+    summary="Google Drive 연동 상태 조회",
+    include_in_schema=False,
+)
+def google_drive_connection_status(
+    *,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """현재 워크스페이스의 Google Drive 연동 상태를 반환한다."""
+
+    workspace = _resolve_workspace(db, user)
+    data_source = db.scalar(
+        select(DataSource).where(
+            DataSource.workspace_idx == workspace.idx,
+            DataSource.type == "googledrive",
+        )
+    )
+
+    credential = None
+    if data_source:
+        credential = db.scalar(
+            select(GoogleDriveOauthCredentials).where(
+                GoogleDriveOauthCredentials.data_source_idx == data_source.idx,
+                GoogleDriveOauthCredentials.user_idx == user.idx,
+            )
+        )
+
+    connected = bool(
+        data_source
+        and credential
+        and data_source.status == "connected"
+        and credential.access_token
+    )
+
+    return {
+        "connected": connected,
+        "status": data_source.status if data_source else "disconnected",
+        "synced_at": data_source.synced.isoformat() if data_source and data_source.synced else None,
+    }
+
+
+@router.get(
     "/oauth/callback",
     summary="Google Drive OAuth 콜백",
     include_in_schema=False,
