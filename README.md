@@ -8,7 +8,6 @@
 - [레포지토리 구조](#레포지토리-구조)
 - [빠른 시작](#빠른-시작)
 - [로컬 개발](#로컬-개발)
-- [필수 환경 변수](#필수-환경-변수)
 - [참고 문서](#참고-문서)
 
 ## 프로젝트 한눈에 보기
@@ -37,7 +36,7 @@
 - LangChain Runnable과 Azure OpenAI 임베딩/챗 모델을 사용해 컨텍스트 제한 답변을 만듭니다.
 - Chroma 벡터 검색과 BM25 키워드 검색을 결합한 하이브리드 검색을 지원합니다 (`backend/ai_module` 및 `backend/rag`).
 
-### 프런트엔드 경험
+### 프런트엔드
 - React Router 기반 라우팅, axios 클라이언트, 토큰 인터셉터로 보호된 API 호출을 다룹니다.
 - OAuth 콜백/대시보드/챗/마이페이지 등 주요 화면을 `frontend/my-react-app/src`에서 찾을 수 있습니다.
 
@@ -47,7 +46,6 @@
 - `init/` — MySQL 초기화 스크립트 및 시드 데이터.
 - `docker-compose.yml` — MySQL·백엔드·프런트엔드·Nginx 서비스 정의와 볼륨 설정.
 - `nginx.conf` — 리버스 프록시 및 정적 파일 서빙 설정.
-- `backend/agents/` — PRD/TRD/스토리/태스크 기록 등 제품·개발 문서.
 
 ## 빠른 시작
 1. **환경 변수 준비**: `backend/.env` 파일을 생성해 아래 [필수 환경 변수](#필수-환경-변수)를 채웁니다.
@@ -69,17 +67,7 @@
 - **의존성 관리**: `uv`를 사용해 `pyproject.toml`/`uv.lock` 기반으로 설치합니다 (`uv pip sync` 또는 Dockerfile 참고).
 - **데이터베이스**: 개발용 MySQL을 로컬에서 실행하거나 `docker compose up mysql`로 컨테이너만 띄운 뒤 `backend/.env`의 연결 정보를 맞춥니다.
 
-## 필수 환경 변수
-| 카테고리 | 키 | 설명 |
-| --- | --- | --- |
-| MySQL | `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_DATABASE`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_ROOT_PASSWORD` | Compose `mysql` 서비스와 동일하게 맞추면 즉시 접속 가능합니다. |
-| JWT | `JWT_SECRET_KEY`, `JWT_ALGORITHM=HS256`, `JWT_ACCESS_TOKEN_EXPIRE_MINUTES`, `JWT_REFRESH_TOKEN_EXPIRE_DAYS` | 인증 토큰 생성·검증에 사용됩니다. |
-| Notion OAuth | `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET`, `NOTION_REDIRECT_URI` | 공유 페이지 연동용 클라이언트 자격 증명. |
-| Azure OpenAI 임베딩 | `EM_AZURE_OPENAI_API_KEY`, `EM_AZURE_OPENAI_ENDPOINT`, `EM_AZURE_OPENAI_API_VERSION`, `EM_AZURE_OPENAI_EMBEDDING_DEPLOYMENT`, `EM_AZURE_OPENAI_EMBEDDING_MODEL` | RAG 임베딩 생성에 사용됩니다. |
-| RAG | `RAG_CHUNK_OVERLAP_RATIO`, `TOP_K`, `HYBRID_ALPHA`, `HYBRID_RRF_K` | 청크 분할 및 검색 파라미터 조정용. |
-| 프런트엔드 리다이렉션 | `FRONT_MAIN_REDIRECT_URL` | OAuth 완료 후 이동할 프런트엔드 URL (Google Drive 연동 등). |
 
 ## 참고 문서
 - 백엔드 상세 기능 및 실행: [`backend/README.md`](backend/README.md)
-- 제품/기술 요구사항, 사용자 스토리, 태스크 로그: [`backend/agents/`](backend/agents)
 - 초기 스키마: [`init/init.sql`](init/init.sql)
