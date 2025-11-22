@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import styled from 'styled-components';
-import axios from 'axios';
+import apiClient, { getAccessToken } from '../api/client';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 
 // --- Styled Components (연동 페이지와 유사) ---
@@ -76,7 +76,7 @@ function NotionOAuthCallback() {
     // 백엔드의 콜백 API를 호출합니다.
     const verifyCallback = async () => {
       try {
-        const token = localStorage.getItem('accessToken');
+        const token = getAccessToken();
         if (!token) {
            setError('인증 정보가 만료되었습니다. 다시 로그인해주세요.');
            setLoading(false);
@@ -88,11 +88,8 @@ function NotionOAuthCallback() {
 
         // 백엔드 API에 code와 state를 쿼리 파라미터로 전달합니다.
         // 이 때 사용자가 로그인된 상태임을 증명하기 위해 Bearer 토큰을 헤더에 포함합니다.
-        await axios.get(apiUrl, {
+        await apiClient.get(apiUrl, {
           params: { code, state },
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
         });
 
         // OAuth 완료 후 자동 RAG 동기화를 호출합니다.
@@ -100,11 +97,7 @@ function NotionOAuthCallback() {
         let syncFailed = false;
 
         try {
-          await axios.post('/api/notion/pages/pull', {}, {
-            headers: {
-              'Authorization': `Bearer ${token}`
-            }
-          });
+          await apiClient.post('/api/notion/pages/pull');
         } catch (syncError) {
           console.error('Notion RAG 동기화 실패:', syncError);
           syncFailed = true;

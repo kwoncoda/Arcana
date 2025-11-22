@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import styled, { keyframes } from 'styled-components';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
-import axios from 'axios';
+import apiClient, { clearTokens, getAccessToken } from '../api/client';
 import { 
   Home, 
   MessageSquare, 
@@ -870,17 +870,13 @@ function MainDashboard() {
   const fetchConnections = useCallback(async (tokenOverride) => {
     setLoadingConnections(true);
     try {
-      const token = tokenOverride || localStorage.getItem('accessToken');
+      const token = tokenOverride || getAccessToken();
       if (!token) {
         navigate('/login');
         return [];
       }
 
-      const res = await axios.get('/api/users/connections', {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
+      const res = await apiClient.get('/api/users/connections');
 
       const fetchedConnections = res.data.connections || [];
       setConnections(fetchedConnections);
@@ -889,8 +885,7 @@ function MainDashboard() {
       console.error('Failed to fetch connections:', err);
       const status = err?.response?.status;
       if (status === 401 || status === 404) {
-        localStorage.removeItem('accessToken');
-        localStorage.removeItem('refreshToken');
+        clearTokens();
         localStorage.removeItem('userNickname');
         navigate('/login');
       }
@@ -993,7 +988,7 @@ function MainDashboard() {
   const handleRefreshKnowledge = async () => {
     if (syncing) return;
 
-    const token = localStorage.getItem('accessToken');
+    const token = getAccessToken();
     if (!token) {
       setSyncMessage({
         variant: 'error',
@@ -1002,10 +997,6 @@ function MainDashboard() {
       navigate('/login');
       return;
     }
-
-    const headers = {
-      'Authorization': `Bearer ${token}`
-    };
 
     setSyncing(true);
     setSyncMessage({
@@ -1067,7 +1058,7 @@ function MainDashboard() {
           }
 
           try {
-            const response = await axios.post(pullEndpoint, {}, { headers });
+            const response = await apiClient.post(pullEndpoint, {});
             const ingested = response?.data?.ingested_chunks;
             if (typeof ingested === 'number') {
               successMessages.push(`${displayName}: ${ingested}개 청크 갱신`);
@@ -1078,8 +1069,7 @@ function MainDashboard() {
             const status = error?.response?.status;
             if (status === 401) {
               unauthorizedDetected = true;
-              localStorage.removeItem('accessToken');
-              localStorage.removeItem('refreshToken');
+              clearTokens();
               localStorage.removeItem('userNickname');
               navigate('/login');
               failureMessages.push(`${displayName}: 인증이 만료되었습니다. 다시 로그인해주세요.`);
@@ -1157,7 +1147,7 @@ function MainDashboard() {
       autoResizeTextarea(textareaRef.current);
     }
 
-    const token = localStorage.getItem('accessToken');
+    const token = getAccessToken();
     if (!token) {
       navigate('/login');
       return;
@@ -1166,11 +1156,10 @@ function MainDashboard() {
     setChatMessages((prev) => [...prev, { role: 'user', content: query }]);
 
     try {
-      const res = await axios.post(
+      const res = await apiClient.post(
         '/api/aiagent/search',
         { query },
         {
-          headers: { 'Authorization': `Bearer ${token}` },
           signal: controller.signal,
         }
       );
@@ -1194,6 +1183,8 @@ function MainDashboard() {
       let errorMessage = '답변을 생성하는 중 오류가 발생했습니다.';
       if (err.response) {
         if (err.response.status === 401) {
+          clearTokens();
+          localStorage.removeItem('userNickname');
           navigate('/login');
           return;
         }
@@ -1254,7 +1245,7 @@ function MainDashboard() {
     const shouldDisconnect = window.confirm(confirmMessage);
     if (!shouldDisconnect) return;
 
-    const token = localStorage.getItem('accessToken');
+    const token = getAccessToken();
     if (!token) {
       navigate('/login');
       return;
@@ -1262,17 +1253,15 @@ function MainDashboard() {
 
     try {
       setDisconnectingSource(connection?.type || details.name);
-      await axios.post(endpoint, {}, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
+      await apiClient.post(endpoint, {});
 
       await fetchConnections(token);
     } catch (err) {
       console.error('Failed to disconnect data source:', err);
       const status = err?.response?.status;
       if (status === 401 || status === 404) {
+        clearTokens();
+        localStorage.removeItem('userNickname');
         navigate('/login');
         return;
       }

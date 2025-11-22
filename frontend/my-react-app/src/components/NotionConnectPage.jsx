@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import styled from 'styled-components';
-import axios from 'axios';
+import apiClient, { clearTokens, getAccessToken } from '../api/client';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
 // 1. 이미지를 import 합니다. (경로는 src/assets/notion.png 기준)
 import notionLogo from '../assets/notion.png';
@@ -182,7 +182,7 @@ function NotionConnectPage() {
   }, [location.state, navigate]);
 
   useEffect(() => {
-    const token = localStorage.getItem('accessToken');
+    const token = getAccessToken();
     if (!token) {
       setCheckingStatus(false);
       return;
@@ -191,17 +191,11 @@ function NotionConnectPage() {
     const fetchStatus = async () => {
       try {
         const [notionRes, googleRes] = await Promise.all([
-          axios.get('/api/notion/status', {
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Accept': 'application/json'
-            }
+          apiClient.get('/api/notion/status', {
+            headers: { 'Accept': 'application/json' }
           }),
-          axios.get('/api/google-drive/status', {
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Accept': 'application/json'
-            }
+          apiClient.get('/api/google-drive/status', {
+            headers: { 'Accept': 'application/json' }
           })
         ]);
 
@@ -228,7 +222,7 @@ function NotionConnectPage() {
     setLoading(true);
     setError(null);
 
-    const token = localStorage.getItem('accessToken');
+    const token = getAccessToken();
 
     if (!token) {
       setError('로그인이 필요합니다. 다시 로그인해주세요.');
@@ -240,12 +234,11 @@ function NotionConnectPage() {
     const apiUrl = '/api/notion/connect'; 
 
     try {
-      const res = await axios.post(
+      const res = await apiClient.post(
         apiUrl, 
         {}, 
         {
           headers: {
-            'Authorization': `Bearer ${token}`,
             'Accept': 'application/json'
           }
         }
@@ -265,8 +258,7 @@ function NotionConnectPage() {
       if (err.response) {
         if (err.response.status === 401) {
           setError('인증에 실패했습니다. 다시 로그인해주세요.');
-          localStorage.removeItem('accessToken');
-          localStorage.removeItem('refreshToken');
+          clearTokens();
           setTimeout(() => navigate('/login'), 2000);
         } else if (err.response.status === 404) {
           setError('워크스페이스를 찾을 수 없습니다. (404)');
@@ -284,7 +276,7 @@ function NotionConnectPage() {
     setGoogleLoading(true);
     setGoogleError(null);
 
-    const token = localStorage.getItem('accessToken');
+    const token = getAccessToken();
 
     if (!token) {
       setGoogleError('로그인이 필요합니다. 다시 로그인해주세요.');
@@ -296,12 +288,11 @@ function NotionConnectPage() {
     const apiUrl = '/api/google-drive/connect';
 
     try {
-      const res = await axios.post(
+      const res = await apiClient.post(
         apiUrl,
         {},
         {
           headers: {
-            'Authorization': `Bearer ${token}`,
             'Accept': 'application/json'
           }
         }
@@ -320,8 +311,7 @@ function NotionConnectPage() {
       if (err.response) {
         if (err.response.status === 401) {
           setGoogleError('인증에 실패했습니다. 다시 로그인해주세요.');
-          localStorage.removeItem('accessToken');
-          localStorage.removeItem('refreshToken');
+          clearTokens();
           setTimeout(() => navigate('/login'), 2000);
         } else if (err.response.status === 404) {
           setGoogleError('워크스페이스를 찾을 수 없습니다. (404)');

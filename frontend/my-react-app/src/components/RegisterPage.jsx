@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import styled, { css } from 'styled-components';
-import axios from 'axios';
+import apiClient from '../api/client';
 import { useNavigate, Link } from 'react-router-dom';
 
 // --- Styled Components ---
@@ -191,7 +191,7 @@ function RegisterPage() {
     const apiUrl = '/api/users/register'; // vite.config.js 
 
     try {
-      const response = await axios.post(apiUrl, payload);
+      const response = await apiClient.post(apiUrl, payload);
       
       console.log('Register Success:', response);
       alert('회원가입이 완료되었습니다. 로그인 페이지로 이동합니다.');
