@@ -95,8 +95,6 @@ function NotionOAuthCallback() {
           }
         });
 
-        setLoading(false);
-
         navigate('/dashboard', {
           state: {
             notionConnected: true,
@@ -104,6 +102,9 @@ function NotionOAuthCallback() {
             syncOverlayMessage: '노션 데이터로 지식 베이스를 갱신하고 있습니다...'
           },
         });
+
+        // 콜백 화면에서 동기화가 실행되지 않도록 즉시 대시보드로 이동
+        setLoading(false);
 
       } catch (err) {
         console.error('OAuth Callback Error:', err);

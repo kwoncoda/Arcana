@@ -83,8 +83,6 @@ function GoogleOAuthCallback() {
           },
         });
 
-        setLoading(false);
-
         navigate('/dashboard', {
           state: {
             googleConnected: true,
@@ -92,6 +90,9 @@ function GoogleOAuthCallback() {
             syncOverlayMessage: 'Google Drive 데이터로 지식 베이스를 갱신하고 있습니다...'
           },
         });
+
+        // 더 이상 이 페이지에서 추가 동기화 작업을 수행하지 않도록 즉시 이동
+        setLoading(false);
       } catch (err) {
         console.error('Google OAuth Callback Error:', err);
         if (err.response) {
