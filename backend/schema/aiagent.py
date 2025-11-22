@@ -21,7 +21,7 @@ class SearchResponse(BaseModel):
     """에이전트 실행 결과 응답."""
 
     answer: str
-    mode: Literal["search", "generate"]
+    mode: Literal["search", "generate", "chat"]
     notion_page_url: Optional[str] = None
     notion_page_id: Optional[str] = None
 
