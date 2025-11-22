@@ -424,86 +424,81 @@ def delete_me(
     workspace_storage_dir = None
 
     try:
-        with db.begin():
-            user_type = WorkspaceType(user.type)
+        user_type = WorkspaceType(user.type)
 
-            if user_type is WorkspaceType.personal:
-                personal_workspace = db.scalar(
-                    select(Workspace).where(
-                        Workspace.owner_user_idx == user.idx,
-                        Workspace.type == WorkspaceType.personal.value,
-                    )
+        if user_type is WorkspaceType.personal:
+            personal_workspace = db.scalar(
+                select(Workspace).where(
+                    Workspace.owner_user_idx == user.idx,
+                    Workspace.type == WorkspaceType.personal.value,
                 )
+            )
 
-                if personal_workspace:
-                    workspace_storage_dir = workspace_storage_path(personal_workspace.name)
+            if personal_workspace:
+                workspace_storage_dir = workspace_storage_path(personal_workspace.name)
 
-                    data_source_ids = db.scalars(
-                        select(DataSource.idx).where(
-                            DataSource.workspace_idx == personal_workspace.idx
-                        )
-                    ).all()
-
-                    if data_source_ids:
-                        db.execute(
-                            delete(GoogleDriveFileSnapshot).where(
-                                GoogleDriveFileSnapshot.data_source_idx.in_(data_source_ids)
-                            )
-                        )
-                        db.execute(
-                            delete(GoogleDriveSyncState).where(
-                                GoogleDriveSyncState.data_source_idx.in_(data_source_ids)
-                            )
-                        )
-                        db.execute(
-                            delete(GoogleDriveOauthCredentials).where(
-                                GoogleDriveOauthCredentials.data_source_idx.in_(data_source_ids)
-                            )
-                        )
-                        db.execute(
-                            delete(NotionOauthCredentials).where(
-                                NotionOauthCredentials.data_source_idx.in_(data_source_ids)
-                            )
-                        )
-
-                    db.execute(
-                        delete(RagIndex).where(
-                            RagIndex.workspace_idx == personal_workspace.idx
-                        )
-                    )
-                    db.execute(
-                        delete(DataSource).where(
-                            DataSource.workspace_idx == personal_workspace.idx
-                        )
-                    )
-                    db.execute(
-                        delete(Workspace).where(Workspace.idx == personal_workspace.idx)
-                    )
-
-            if user_type is WorkspaceType.organization:
-                organization_ids = db.scalars(
-                    select(Membership.organization_idx).where(
-                        Membership.user_idx == user.idx
+                data_source_ids = db.scalars(
+                    select(DataSource.idx).where(
+                        DataSource.workspace_idx == personal_workspace.idx
                     )
                 ).all()
 
+                if data_source_ids:
+                    db.execute(
+                        delete(GoogleDriveFileSnapshot).where(
+                            GoogleDriveFileSnapshot.data_source_idx.in_(data_source_ids)
+                        )
+                    )
+                    db.execute(
+                        delete(GoogleDriveSyncState).where(
+                            GoogleDriveSyncState.data_source_idx.in_(data_source_ids)
+                        )
+                    )
+                    db.execute(
+                        delete(GoogleDriveOauthCredentials).where(
+                            GoogleDriveOauthCredentials.data_source_idx.in_(data_source_ids)
+                        )
+                    )
+                    db.execute(
+                        delete(NotionOauthCredentials).where(
+                            NotionOauthCredentials.data_source_idx.in_(data_source_ids)
+                        )
+                    )
+
                 db.execute(
-                    delete(NotionOauthCredentials).where(
-                        NotionOauthCredentials.user_idx == user.idx
+                    delete(RagIndex).where(
+                        RagIndex.workspace_idx == personal_workspace.idx
                     )
                 )
                 db.execute(
-                    delete(GoogleDriveOauthCredentials).where(
-                        GoogleDriveOauthCredentials.user_idx == user.idx
+                    delete(DataSource).where(
+                        DataSource.workspace_idx == personal_workspace.idx
                     )
                 )
                 db.execute(
-                    delete(Membership).where(Membership.user_idx == user.idx)
+                    delete(Workspace).where(Workspace.idx == personal_workspace.idx)
                 )
 
-            db.execute(delete(User).where(User.idx == user.idx))
+        if user_type is WorkspaceType.organization:
+            db.execute(
+                delete(NotionOauthCredentials).where(
+                    NotionOauthCredentials.user_idx == user.idx
+                )
+            )
+            db.execute(
+                delete(GoogleDriveOauthCredentials).where(
+                    GoogleDriveOauthCredentials.user_idx == user.idx
+                )
+            )
+            db.execute(
+                delete(Membership).where(Membership.user_idx == user.idx)
+            )
+
+        db.execute(delete(User).where(User.idx == user.idx))
+        db.commit()
 
     except Exception:
+        logger.exception("Failed to delete user %s", user.idx)
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
