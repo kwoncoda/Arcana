@@ -1328,10 +1328,16 @@ function MainDashboard() {
   const ensurePendingUserMessage = useCallback(
     (query, messages) => {
       if (!query) return messages;
+
       const userMessage = { role: 'user', content: query, id: Date.now() };
-      const updated = [...messages, userMessage];
-      persistChatState(updated, true, query);
-      return updated;
+      let nextMessages = messages;
+      setChatMessages(prev => {
+        nextMessages = [...prev, userMessage];
+        return nextMessages;
+      });
+
+      persistChatState(nextMessages, true, query);
+      return nextMessages;
     },
     [persistChatState]
   );
@@ -1527,6 +1533,12 @@ function MainDashboard() {
     return null;
   };
 
+  const messagesToRender = chatMessages.length > 0
+    ? chatMessages
+    : (isChatLoading && pendingQuery
+      ? [{ role: 'user', content: pendingQuery, id: 'pending-fallback' }]
+      : []);
+
   return (
     <DashboardContainer>
 
@@ -1644,7 +1656,7 @@ function MainDashboard() {
           <ChatWrapper>
             <ChatContainer ref={chatContainerRef}>
               
-              {chatMessages.length === 0 ? (
+              {messagesToRender.length === 0 ? (
                 <WelcomeMessage>
                   <h3>안녕하세요! Arcana AI Assistant입니다.</h3>
                   <p>조직의 모든 지식을 통합하여 맥락적 답변을 제공해드립니다. 무엇을 도와드릴까요? 예를 들어</p>
@@ -1655,7 +1667,7 @@ function MainDashboard() {
                   </ul>
                 </WelcomeMessage>
               ) : (
-                chatMessages.map((msg, index) => (
+                messagesToRender.map((msg, index) => (
                   <MessageWrapper key={index} $role={msg.role}>
                     <MessageHeader>
                       {msg.role === 'user' ? 'You' : 'Arcana AI'}
