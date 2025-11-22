@@ -19,7 +19,13 @@ from utils.db import SessionLocal
 
 load_dotenv()
 
-SCOPES = ['https://www.googleapis.com/auth/drive']
+_client_scopes_env = os.getenv("GOOGLE_DRIVE_SCOPES")
+if _client_scopes_env:
+    SCOPES = [scope.strip() for scope in _client_scopes_env.split() if scope.strip()]
+else:
+    raise RuntimeError(
+        "GOOGLE_DRIVE_SCOPES 환경 변수를 설정하세요."
+    )
 
 CONVERTIBLE_MIME_TYPES = [
     'application/vnd.google-apps.document',

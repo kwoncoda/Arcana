@@ -26,7 +26,9 @@ _client_scopes_env = os.getenv("GOOGLE_DRIVE_SCOPES")
 if _client_scopes_env:
     SCOPES = [scope.strip() for scope in _client_scopes_env.split() if scope.strip()]
 else:
-    SCOPES = DEFAULT_SCOPES
+    raise RuntimeError(
+        "GOOGLE_DRIVE_SCOPES 환경 변수를 설정하세요."
+    )
 
 CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
