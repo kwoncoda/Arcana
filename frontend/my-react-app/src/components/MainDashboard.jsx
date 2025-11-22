@@ -291,6 +291,82 @@ const SyncStatusBar = styled.div`
   color: ${({ $variant }) => (SYNC_STATUS_COLORS[$variant] || SYNC_STATUS_COLORS.info).color};
 `;
 
+const DisconnectConfirmBar = styled.div`
+  margin: 12px 24px 0;
+  border-radius: 8px;
+  padding: 12px 16px;
+  background-color: #fff5f5;
+  border: 1px solid #feb2b2;
+  color: #742a2a;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+`;
+
+const DisconnectMessage = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+
+  strong {
+    font-size: 14px;
+  }
+
+  span {
+    font-size: 13px;
+    color: #9b2c2c;
+  }
+`;
+
+const DisconnectActions = styled.div`
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+`;
+
+const SecondaryButton = styled.button`
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #2d3748;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+
+  &:hover {
+    background: #edf2f7;
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
+  }
+`;
+
+const DangerButton = styled.button`
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: none;
+  background: #e53e3e;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+
+  &:hover {
+    background: #c53030;
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
+  }
+`;
+
 const ChatWrapper = styled.div`
   flex: 1;
   display: flex;
@@ -955,6 +1031,7 @@ function MainDashboard() {
   const [connections, setConnections] = useState([]);
   const [loadingConnections, setLoadingConnections] = useState(true);
   const [disconnectingSource, setDisconnectingSource] = useState(null);
+  const [pendingDisconnect, setPendingDisconnect] = useState(null);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState(null);
   const [shouldAutoRefresh, setShouldAutoRefresh] = useState(false);
@@ -1377,7 +1454,7 @@ function MainDashboard() {
     document.body.removeChild(textArea);
   };
 
-  const handleDisconnectConnection = async (event, connection) => {
+  const handleDisconnectConnection = (event, connection) => {
     event?.stopPropagation?.();
 
     const details = getProviderDetails(connection);
@@ -1391,9 +1468,17 @@ function MainDashboard() {
       return;
     }
 
-    const confirmMessage = `${details.name} 데이터 소스 연결을 끊으시겠습니까?`;
-    const shouldDisconnect = window.confirm(confirmMessage);
-    if (!shouldDisconnect) return;
+    setPendingDisconnect({ connection, endpoint, details });
+  };
+
+  const cancelDisconnectRequest = () => {
+    setPendingDisconnect(null);
+  };
+
+  const confirmDisconnectConnection = async () => {
+    if (!pendingDisconnect) return;
+
+    const { connection, endpoint, details } = pendingDisconnect;
 
     const token = getAccessToken();
     if (!token) {
@@ -1403,9 +1488,17 @@ function MainDashboard() {
 
     try {
       setDisconnectingSource(connection?.type || details.name);
+      setSyncMessage({
+        variant: 'info',
+        message: `${details.name} 연결을 해제하는 중입니다...`,
+      });
       await apiClient.post(endpoint, {});
 
       await fetchConnections(token);
+      setSyncMessage({
+        variant: 'success',
+        message: `${details.name} 연결이 해제되었습니다.`,
+      });
     } catch (err) {
       console.error('Failed to disconnect data source:', err);
       const status = err?.response?.status;
@@ -1425,6 +1518,7 @@ function MainDashboard() {
       });
     } finally {
       setDisconnectingSource(null);
+      setPendingDisconnect(null);
     }
   };
 
@@ -1583,6 +1677,31 @@ function MainDashboard() {
           <SyncStatusBar $variant={syncMessage.variant}>
             {syncMessage.message}
           </SyncStatusBar>
+        )}
+
+        {pendingDisconnect && (
+          <DisconnectConfirmBar>
+            <DisconnectMessage>
+              <strong>{pendingDisconnect.details.name} 연결 해제</strong>
+              <span>해제 시 더 이상 해당 데이터 소스가 동기화되지 않습니다. 진행하시겠습니까?</span>
+            </DisconnectMessage>
+            <DisconnectActions>
+              <SecondaryButton
+                type="button"
+                onClick={cancelDisconnectRequest}
+                disabled={disconnectingSource !== null}
+              >
+                취소
+              </SecondaryButton>
+              <DangerButton
+                type="button"
+                onClick={confirmDisconnectConnection}
+                disabled={disconnectingSource !== null}
+              >
+                연결 해제
+              </DangerButton>
+            </DisconnectActions>
+          </DisconnectConfirmBar>
         )}
 
         <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
