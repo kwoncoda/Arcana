@@ -1,94 +1,85 @@
-## 프로젝트 개요
-Arcana는 사내 문서와 외부 지식원을 연결해 검색과 생성형 답변을 제공하기 위한 AI 어시스턴트 플랫폼입니다. FastAPI 백엔드와 MySQL 데이터베이스를 Docker Compose로 손쉽게 구동할 수 있으며, Notion OAuth 연동과 RAG 인덱스를 고려한 데이터 모델을 제공합니다.
+# Arcana
+조직 지식을 하나로 모으고 검색·생성까지 이어주는 AI 허브입니다. Notion과 Google Drive 같은 협업 도구를 연결해 RAG 기반 답변과 템플릿화된 문서를 만들어 줍니다.
 
-## 소개
-- **백엔드**: 사용자 인증과 Notion 연동을 담당하는 FastAPI 애플리케이션으로, Swagger 문서를 통해 기본 상태 점검(health check)과 사용자 API를 제공합니다.
-- **데이터 계층**: 초기 스키마는 사용자, 조직, 워크스페이스, RAG 인덱스, 데이터 소스, OAuth 토큰 및 동기화 상태 테이블을 포함하며 Notion 기반 데이터 취득과 색인화를 염두에 두고 설계되었습니다.
-- **배포 환경**: Docker Compose로 MySQL 8.4와 백엔드를 한 번에 띄울 수 있도록 구성되어 있으며, 초기화 스크립트는 `init/init.sql`을 통해 자동 실행됩니다.
+## 목차
+- [프로젝트 한눈에 보기](#프로젝트-한눈에-보기)
+- [아키텍처](#아키텍처)
+- [핵심 기능](#핵심-기능)
+- [레포지토리 구조](#레포지토리-구조)
+- [빠른 시작](#빠른-시작)
+- [로컬 개발](#로컬-개발)
+- [필수 환경 변수](#필수-환경-변수)
+- [참고 문서](#참고-문서)
 
-## 상세 기능
-1. **사용자 관리**
-   - 회원 가입: 사용자 ID, 이메일, 닉네임 중복을 검증하고 PBKDF2 해시로 비밀번호를 안전하게 저장합니다.
-   - 로그인: 사용자 활성 여부를 확인하고 Access/Refresh JWT 토큰을 발급하며 마지막 로그인 시각을 기록합니다.
-2. **인증 토큰 발급**
-   - HMAC-SHA256을 사용한 커스텀 JWT 생성 로직으로 Access/Refresh 토큰 만료 시간을 개별 설정할 수 있습니다.
-3. **데이터베이스 액세스**
-   - 환경 변수 기반의 MySQL 연결 정보를 생성하고 SQLAlchemy 세션 팩토리를 제공합니다.
-4. **Notion OAuth 준비**
-   - Notion OAuth 로그인, 토큰 저장, 페이지 동기화 등을 위한 헬퍼가 포함되어 있으며 FastAPI 라우터 등록만으로 확장 가능합니다.
-5. **헬스 체크**
-   - `/api/health` 엔드포인트를 통해 서비스 가용성을 확인할 수 있습니다.
+## 프로젝트 한눈에 보기
+- **목표**: 분산된 협업 도구의 문서를 통합 검색하고, 근거가 포함된 답변과 문서 템플릿(회의 요약, 주간 리포트 등)을 생성합니다.
+- **스택**: FastAPI + MySQL + Azure OpenAI/Chroma 기반 RAG, Vite/React 프런트엔드.
+- **보안**: JWT 인증, 조직 단위 RAG 인덱스 격리, OAuth 토큰 암호화 저장을 지향합니다.
+- **배포**: Docker Compose로 백엔드·프런트엔드·MySQL·Nginx를 한 번에 기동합니다.
 
-## 상세 기술
-| 영역 | 사용 기술 | 비고 |
-| --- | --- | --- |
-| 웹 프레임워크 | FastAPI | Swagger를 통한 자동 문서화, 라우터 기반 모듈화 |
-| 인증 | 커스텀 JWT(HMAC-SHA256), PBKDF2-SHA256 | 환경 변수로 비밀키/만료시간 제어 |
-| 데이터베이스 | MySQL 8.4, SQLAlchemy ORM | Docker Compose와 초기화 스크립트 연동 |
-| 외부 연동 | Notion OAuth, notion-client SDK | 토큰 저장용 SQLAlchemy 모델 포함 |
-| 컨테이너 | Docker, Docker Compose, uv 패키지 매니저 | Hot reload 설정된 uvicorn 실행 |
+## 아키텍처
+- **backend**: FastAPI 서비스. 사용자/워크스페이스 관리, OAuth 콜백, RAG 검색 및 AI 에이전트 라우터를 제공합니다 (`backend/main.py`).
+- **frontend**: Vite 기반 React 앱. OAuth 콜백과 대시보드/챗 UI를 제공하도록 구성되어 있습니다 (`frontend/my-react-app`).
+- **database**: MySQL 8.4. 초기 스키마는 `init/init.sql`로 자동 적용됩니다.
+- **proxy**: Nginx가 프런트엔드와 백엔드 트래픽을 80포트로 라우팅합니다.
+- **storage**: 워크스페이스별 RAG 스토리지는 `workspace-storage` 볼륨에 마운트됩니다.
 
-## 주요 구성요소
-- `backend/main.py`: FastAPI 앱 초기화, 사용자 라우터 등록, 헬스 체크 엔드포인트 정의.
-- `backend/routers/users.py`: 사용자 모델 정의와 `/users/register`, `/users/login` REST API 구현.
-- `backend/schema/users.py`: 회원 가입/로그인 요청 및 응답 스키마 정의.
-- `backend/utils/`: 데이터베이스 연결(`db.py`)과 JWT 유틸리티(`auth.py`).
-- `backend/notions/`: Notion OAuth 플로우, 토큰 저장 모델, 페이지 조회 유틸리티.
-- `init/init.sql`: 서비스 구동 시 자동 생성되는 MySQL 테이블 스키마 정의.
-- `docker-compose.yml`: MySQL과 백엔드 컨테이너 오케스트레이션, 초기 스크립트 마운트 설정.
+## 핵심 기능
+### 사용자 & 워크스페이스
+- 회원가입/로그인 시 PBKDF2-SHA256 해시와 JWT(액세스/리프레시) 발급을 수행합니다.
+- 개인/조직형 워크스페이스를 생성하고 기본 RAG 인덱스 메타데이터를 보장합니다.
 
-## 실행 전 준비
-1. **필수 도구**
-   - Docker 24+ 및 Docker Compose v2 이상.
-2. **환경 변수 파일(`backend/.env`) 작성**
-   - MySQL 연결 정보
-     ```env
-     MYSQL_HOST=mysql
-     MYSQL_PORT=3306
-     MYSQL_DATABASE=arcana
-     MYSQL_USER=arcana
-     MYSQL_PASSWORD=<사용자 비밀번호>
-     MYSQL_ROOT_PASSWORD=<루트 비밀번호>
-     ```
-   - JWT 설정
-     ```env
-     JWT_SECRET_KEY=<32자 이상 랜덤 시크릿>
-     JWT_ALGORITHM=HS256
-     JWT_ACCESS_TOKEN_EXPIRE_MINUTES=30
-     JWT_REFRESH_TOKEN_EXPIRE_DAYS=14
-     ```
-   - Notion OAuth (사용 시)
-     ```env
-     NOTION_CLIENT_ID=<Notion Integration ID>
-     NOTION_CLIENT_SECRET=<Notion Secret>
-     NOTION_REDIRECT_URI=http://localhost:8000/api/notion/oauth/callback
-     ```
-   - RAG 텍스트 분할
-     ```env
-     RAG_CHUNK_OVERLAP_RATIO=0.1
-     ```
-     `build_jsonl_records_from_pages`와 `build_documents_from_pages`는 청크 길이(`chunk_size`)의 이 비율만큼을 자동으로 겹쳐 분할합니다.
-   - Azure OpenAI 임베딩 (사용 시)
-     ```env
-     EM_AZURE_OPENAI_API_KEY=<Azure OpenAI API Key>
-     EM_AZURE_OPENAI_ENDPOINT=https://<리소스-이름>.openai.azure.com
-     EM_AZURE_OPENAI_API_VERSION=<버젼 날짜>
-     EM_AZURE_OPENAI_EMBEDDING_DEPLOYMENT=<임베딩 배포 이름>
-     EM_AZURE_OPENAI_EMBEDDING_MODEL=<임베딩 모델명, 선택, 기본값은 배포 이름>
-     ```
-   - `.env`는 `docker-compose.yml`의 `env_file`로 두 컨테이너에 주입됩니다.
+### 데이터 소스 연동
+- **Notion**: OAuth로 공유 페이지를 수집해 JSONL/문서 형태로 변환 후 워크스페이스 RAG 스토어에 적재합니다.
+- **Google Drive**: OAuth, 변경 스트림 기반 증분 동기화, 파일 스냅샷/메타데이터 관리, 재색인 판단 로직을 제공합니다 (`backend/routers/google_drive.py`).
 
-## 실행 과정
-1. 프로젝트 루트에서 컨테이너 이미지 빌드 및 서비스 기동
+### RAG 검색 및 생성형 응답
+- LangChain Runnable과 Azure OpenAI 임베딩/챗 모델을 사용해 컨텍스트 제한 답변을 만듭니다.
+- Chroma 벡터 검색과 BM25 키워드 검색을 결합한 하이브리드 검색을 지원합니다 (`backend/ai_module` 및 `backend/rag`).
+
+### 프런트엔드 경험
+- React Router 기반 라우팅, axios 클라이언트, 토큰 인터셉터로 보호된 API 호출을 다룹니다.
+- OAuth 콜백/대시보드/챗/마이페이지 등 주요 화면을 `frontend/my-react-app/src`에서 찾을 수 있습니다.
+
+## 레포지토리 구조
+- `backend/` — FastAPI 앱, 라우터(`routers/`), 모델(`models/`), AI/검색 모듈(`ai_module/`, `rag/`), Notion/Google Drive 유틸(`notions/`, `google_drive/`).
+- `frontend/` — Vite + React 클라이언트 소스(`my-react-app/`)와 빌드용 Dockerfile.
+- `init/` — MySQL 초기화 스크립트 및 시드 데이터.
+- `docker-compose.yml` — MySQL·백엔드·프런트엔드·Nginx 서비스 정의와 볼륨 설정.
+- `nginx.conf` — 리버스 프록시 및 정적 파일 서빙 설정.
+- `backend/agents/` — PRD/TRD/스토리/태스크 기록 등 제품·개발 문서.
+
+## 빠른 시작
+1. **환경 변수 준비**: `backend/.env` 파일을 생성해 아래 [필수 환경 변수](#필수-환경-변수)를 채웁니다.
+2. **컨테이너 실행**:
    ```bash
    docker compose up --build
    ```
-2. MySQL 컨테이너가 `init/init.sql`을 실행하여 기본 스키마를 생성합니다.
-3. 백엔드 컨테이너는 `uvicorn`을 통해 8000번 포트에서 FastAPI 앱을 구동합니다.
-4. 브라우저에서 `http://localhost:8000/api/docs`에 접속하면 Swagger UI를 통해 API를 테스트할 수 있습니다.
-5. `/api/users/register`, `/api/users/login`, `/api/health` 엔드포인트를 활용해 사용자 흐름과 상태를 점검합니다.
+3. **확인**:
+   - 백엔드: http://localhost:8000/api/docs (Swagger)
+   - 프런트엔드: http://localhost:5173
+   - 헬스 체크: `GET http://localhost:8000/api/health`
 
-## 추가 안내
-- **DB 마이그레이션**: 현재는 초기 스키마만 제공되므로, 변경이 필요한 경우 `init/init.sql`을 수정하거나 Alembic 등의 마이그레이션 도구 도입을 권장합니다.
-- **보안**: JWT 시크릿과 데이터베이스 비밀번호는 운영 환경에서 비밀 관리 시스템(예: AWS Secrets Manager, Vault)에 저장하세요.
-- **Notion 연동 활성화**: `backend/main.py`에서 주석 처리된 Notion 라우터를 해제하면 OAuth 플로우와 페이지 동기화 API를 사용할 수 있습니다.
+## 로컬 개발
+- **백엔드 단독 실행**
+  ```bash
+  cd backend
+  uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+  ```
+- **의존성 관리**: `uv`를 사용해 `pyproject.toml`/`uv.lock` 기반으로 설치합니다 (`uv pip sync` 또는 Dockerfile 참고).
+- **데이터베이스**: 개발용 MySQL을 로컬에서 실행하거나 `docker compose up mysql`로 컨테이너만 띄운 뒤 `backend/.env`의 연결 정보를 맞춥니다.
+
+## 필수 환경 변수
+| 카테고리 | 키 | 설명 |
+| --- | --- | --- |
+| MySQL | `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_DATABASE`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_ROOT_PASSWORD` | Compose `mysql` 서비스와 동일하게 맞추면 즉시 접속 가능합니다. |
+| JWT | `JWT_SECRET_KEY`, `JWT_ALGORITHM=HS256`, `JWT_ACCESS_TOKEN_EXPIRE_MINUTES`, `JWT_REFRESH_TOKEN_EXPIRE_DAYS` | 인증 토큰 생성·검증에 사용됩니다. |
+| Notion OAuth | `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET`, `NOTION_REDIRECT_URI` | 공유 페이지 연동용 클라이언트 자격 증명. |
+| Azure OpenAI 임베딩 | `EM_AZURE_OPENAI_API_KEY`, `EM_AZURE_OPENAI_ENDPOINT`, `EM_AZURE_OPENAI_API_VERSION`, `EM_AZURE_OPENAI_EMBEDDING_DEPLOYMENT`, `EM_AZURE_OPENAI_EMBEDDING_MODEL` | RAG 임베딩 생성에 사용됩니다. |
+| RAG | `RAG_CHUNK_OVERLAP_RATIO`, `TOP_K`, `HYBRID_ALPHA`, `HYBRID_RRF_K` | 청크 분할 및 검색 파라미터 조정용. |
+| 프런트엔드 리다이렉션 | `FRONT_MAIN_REDIRECT_URL` | OAuth 완료 후 이동할 프런트엔드 URL (Google Drive 연동 등). |
+
+## 참고 문서
+- 백엔드 상세 기능 및 실행: [`backend/README.md`](backend/README.md)
+- 제품/기술 요구사항, 사용자 스토리, 태스크 로그: [`backend/agents/`](backend/agents)
+- 초기 스키마: [`init/init.sql`](init/init.sql)
