@@ -111,6 +111,10 @@ const SyncingOverlay = styled.div`
   z-index: 1200;
 `;
 
+const ChatLoadingOverlay = styled(SyncingOverlay)`
+  z-index: 1250;
+`;
+
 const SyncingCard = styled.div`
   min-width: 280px;
   background: #ffffff;
@@ -120,6 +124,12 @@ const SyncingCard = styled.div`
   display: flex;
   align-items: center;
   gap: 14px;
+`;
+
+const ChatLoadingCard = styled(SyncingCard)`
+  max-width: 420px;
+  width: 90%;
+  text-align: center;
 `;
 
 const SyncingSpinner = styled.div`
@@ -144,6 +154,34 @@ const SyncingTextGroup = styled.div`
   span {
     font-size: 13px;
     color: #4a5568;
+  }
+`;
+
+const ChatOverlayActions = styled.div`
+  display: flex;
+  justify-content: center;
+  margin-left: auto;
+  margin-right: auto;
+`;
+
+const ChatOverlayButton = styled.button`
+  margin-top: 8px;
+  padding: 10px 16px;
+  background-color: #EBF8FF;
+  color: #2B6CB0;
+  border: 1px solid #BEE3F8;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease;
+
+  &:hover {
+    background-color: #DBEAFE;
+    color: #1A365D;
+  }
+
+  &:active {
+    background-color: #BFDBFE;
   }
 `;
 
@@ -1414,6 +1452,21 @@ function MainDashboard() {
 
   return (
     <DashboardContainer>
+
+      <ChatLoadingOverlay $visible={isChatLoading}>
+        <ChatLoadingCard>
+          <SyncingSpinner />
+          <SyncingTextGroup>
+            <strong>답변 중입니다</strong>
+            <span>백엔드에서 연산을 처리하고 있습니다. 잠시만 기다려주세요.</span>
+          </SyncingTextGroup>
+          <ChatOverlayActions>
+            <ChatOverlayButton type="button" onClick={handleStopMessage}>
+              중단하기
+            </ChatOverlayButton>
+          </ChatOverlayActions>
+        </ChatLoadingCard>
+      </ChatLoadingOverlay>
 
       <SyncingOverlay $visible={syncing}>
         <SyncingCard>
