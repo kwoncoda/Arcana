@@ -1,6 +1,7 @@
 """단순 대화 요청을 처리하는 에이전트."""
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from langchain_core.output_parsers import StrOutputParser
@@ -9,6 +10,8 @@ from langchain_core.runnables import RunnableSequence
 from langchain_openai import AzureChatOpenAI
 
 from .ai_config import _gpt5_load_chat_config
+
+logger = logging.getLogger("arcana")
 
 
 class ChatAgent:
@@ -61,5 +64,13 @@ class ChatAgent:
         """대화 응답을 생성한다."""
 
         chain = self._ensure_chain()
-        answer = await chain.ainvoke({"query": query})
-        return answer.strip()
+        try:
+            answer = await chain.ainvoke({"query": query})
+        except Exception as exc:  # pragma: no cover - 외부 API 방어
+            logger.exception("ChatAgent 응답 생성 실패: %s", exc)
+            return "지금은 답변을 준비하지 못했어요. 다시 한번 말씀해 주세요."
+
+        cleaned = (answer or "").strip()
+        if not cleaned:
+            return "지금은 답변을 준비하지 못했어요. 다시 한번 말씀해 주세요."
+        return cleaned

@@ -226,8 +226,11 @@ class WorkspaceAgentOrchestrator:
                 "친근하고 짧은 대화체로 답하고, 워크스페이스 문서나 링크는 언급하지 마세요."
             )
         instructions = " ".join([base_instruction, *extras]).strip()
+        answer_draft = (result.answer or "").strip()
+        if not answer_draft:
+            answer_draft = "지금은 답변을 준비하지 못했어요. 다시 한번 말씀해 주세요."
         refined_answer = await self._final_answer_agent.craft_final_answer(
-            answer_draft=result.answer,
+            answer_draft=answer_draft,
             question=result.question,
             workspace_name=state.get("workspace_name", ""),
             mode=mode,
