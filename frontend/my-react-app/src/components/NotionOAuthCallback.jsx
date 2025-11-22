@@ -92,23 +92,13 @@ function NotionOAuthCallback() {
           params: { code, state },
         });
 
-        // OAuth 완료 후 자동 RAG 동기화를 호출합니다.
-        setLoadingMessage('노션 데이터로 지식 베이스를 갱신하고 있습니다...');
-        let syncFailed = false;
-
-        try {
-          await apiClient.post('/api/notion/pages/pull');
-        } catch (syncError) {
-          console.error('Notion RAG 동기화 실패:', syncError);
-          syncFailed = true;
-        }
-
+        setLoadingMessage('Notion 연동이 완료되었습니다. 대시보드로 이동합니다...');
         setLoading(false);
 
         navigate('/dashboard', {
           state: {
             notionConnected: true,
-            notionSyncFailed: syncFailed,
+            notionSyncFailed: false,
             triggerKnowledgeRefresh: true,
           },
         });
