@@ -80,22 +80,14 @@ function GoogleOAuthCallback() {
           params: { code, state },
         });
 
-        setLoadingMessage('Google Drive 데이터로 지식 베이스를 갱신하고 있습니다...');
-        let syncFailed = false;
-
-        try {
-          await apiClient.post('/api/google-drive/files/pull');
-        } catch (syncError) {
-          console.error('Google Drive RAG 동기화 실패:', syncError);
-          syncFailed = true;
-        }
-
+        setLoadingMessage('Google Drive 연동이 완료되었습니다. 대시보드로 이동합니다...');
         setLoading(false);
 
         navigate('/dashboard', {
           state: {
             googleConnected: true,
-            googleSyncFailed: syncFailed,
+            googleSyncFailed: false,
+            triggerKnowledgeRefresh: true,
           },
         });
       } catch (err) {
