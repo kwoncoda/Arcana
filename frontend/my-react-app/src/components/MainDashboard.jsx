@@ -981,63 +981,6 @@ function MainDashboard() {
   }, [location, navigate]);
 
   useEffect(() => {
-    const state = location.state || {};
-    const { startSyncSources, syncOverlayMessage, notionConnected, googleConnected } = state;
-
-    if (startSyncSources) {
-      handleRefreshKnowledge({
-        targetSourceTypes: startSyncSources,
-        overlayMessage: syncOverlayMessage,
-        suppressStatusMessage: true,
-      }).then((result) => {
-        const hasFailure = result?.failureMessages?.length > 0 || result?.unauthorizedDetected;
-
-        if (notionConnected) {
-          setSyncMessage({
-            variant: hasFailure ? 'warning' : 'success',
-            message: hasFailure
-              ? '노션 연동은 완료되었지만 지식 베이스 갱신 중 오류가 발생했습니다. 다시 시도해주세요.'
-              : '노션이 연동되었습니다.',
-          });
-        } else if (googleConnected) {
-          setSyncMessage({
-            variant: hasFailure ? 'warning' : 'success',
-            message: hasFailure
-              ? 'Google Drive 연동은 완료되었지만 지식 베이스 갱신 중 오류가 발생했습니다. 다시 시도해주세요.'
-              : 'Google Drive가 연동되었습니다.',
-          });
-        } else if (result?.finalStatus) {
-          setSyncMessage(result.finalStatus);
-        }
-      }).finally(() => {
-        navigate(location.pathname, { replace: true, state: {} });
-      });
-      return;
-    }
-
-    if (notionConnected) {
-      setSyncMessage({
-        variant: state.notionSyncFailed ? 'warning' : 'success',
-        message: state.notionSyncFailed
-          ? '노션 연동은 완료되었지만 지식 베이스 갱신 중 오류가 발생했습니다. 다시 시도해주세요.'
-          : '노션이 연동되었습니다.',
-      });
-      navigate(location.pathname, { replace: true, state: {} });
-      return;
-    }
-
-    if (googleConnected) {
-      setSyncMessage({
-        variant: state.googleSyncFailed ? 'warning' : 'success',
-        message: state.googleSyncFailed
-          ? 'Google Drive 연동은 완료되었지만 지식 베이스 갱신 중 오류가 발생했습니다. 다시 시도해주세요.'
-          : 'Google Drive가 연동되었습니다.',
-      });
-      navigate(location.pathname, { replace: true, state: {} });
-    }
-  }, [handleRefreshKnowledge, location, navigate]);
-
-  useEffect(() => {
     if (chatContainerRef.current) {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
@@ -1267,6 +1210,63 @@ function MainDashboard() {
       setSyncOverlayMessage('');
     }
   }, [connections, fetchConnections, navigate, syncing]);
+
+  useEffect(() => {
+    const state = location.state || {};
+    const { startSyncSources, syncOverlayMessage, notionConnected, googleConnected } = state;
+
+    if (startSyncSources) {
+      handleRefreshKnowledge({
+        targetSourceTypes: startSyncSources,
+        overlayMessage: syncOverlayMessage,
+        suppressStatusMessage: true,
+      }).then((result) => {
+        const hasFailure = result?.failureMessages?.length > 0 || result?.unauthorizedDetected;
+
+        if (notionConnected) {
+          setSyncMessage({
+            variant: hasFailure ? 'warning' : 'success',
+            message: hasFailure
+              ? '노션 연동은 완료되었지만 지식 베이스 갱신 중 오류가 발생했습니다. 다시 시도해주세요.'
+              : '노션이 연동되었습니다.',
+          });
+        } else if (googleConnected) {
+          setSyncMessage({
+            variant: hasFailure ? 'warning' : 'success',
+            message: hasFailure
+              ? 'Google Drive 연동은 완료되었지만 지식 베이스 갱신 중 오류가 발생했습니다. 다시 시도해주세요.'
+              : 'Google Drive가 연동되었습니다.',
+          });
+        } else if (result?.finalStatus) {
+          setSyncMessage(result.finalStatus);
+        }
+      }).finally(() => {
+        navigate(location.pathname, { replace: true, state: {} });
+      });
+      return;
+    }
+
+    if (notionConnected) {
+      setSyncMessage({
+        variant: state.notionSyncFailed ? 'warning' : 'success',
+        message: state.notionSyncFailed
+          ? '노션 연동은 완료되었지만 지식 베이스 갱신 중 오류가 발생했습니다. 다시 시도해주세요.'
+          : '노션이 연동되었습니다.',
+      });
+      navigate(location.pathname, { replace: true, state: {} });
+      return;
+    }
+
+    if (googleConnected) {
+      setSyncMessage({
+        variant: state.googleSyncFailed ? 'warning' : 'success',
+        message: state.googleSyncFailed
+          ? 'Google Drive 연동은 완료되었지만 지식 베이스 갱신 중 오류가 발생했습니다. 다시 시도해주세요.'
+          : 'Google Drive가 연동되었습니다.',
+      });
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [handleRefreshKnowledge, location, navigate]);
 
   const handleSendMessage = async () => {
     const query = chatInput.trim();
