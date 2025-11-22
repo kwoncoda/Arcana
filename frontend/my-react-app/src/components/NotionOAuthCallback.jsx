@@ -60,7 +60,7 @@ function NotionOAuthCallback() {
   const navigate = useNavigate();
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [loadingMessage, setLoadingMessage] = useState('Notion과 정보를 교환하고 있습니다. 잠시만 기다려주세요...');
+  const [loadingMessage] = useState('Notion과 정보를 교환하고 있습니다. 잠시만 기다려주세요...');
 
   useEffect(() => {
     const code = searchParams.get('code');
@@ -95,27 +95,13 @@ function NotionOAuthCallback() {
           }
         });
 
-        // OAuth 완료 후 자동 RAG 동기화를 호출합니다.
-        setLoadingMessage('노션 데이터로 지식 베이스를 갱신하고 있습니다...');
-        let syncFailed = false;
-
-        try {
-          await axios.post('/api/notion/pages/pull', {}, {
-            headers: {
-              'Authorization': `Bearer ${token}`
-            }
-          });
-        } catch (syncError) {
-          console.error('Notion RAG 동기화 실패:', syncError);
-          syncFailed = true;
-        }
-
         setLoading(false);
 
         navigate('/dashboard', {
           state: {
             notionConnected: true,
-            notionSyncFailed: syncFailed,
+            startSyncSources: ['notion'],
+            syncOverlayMessage: '노션 데이터로 지식 베이스를 갱신하고 있습니다...'
           },
         });
 

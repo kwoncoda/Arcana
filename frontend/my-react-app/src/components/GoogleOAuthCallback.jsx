@@ -54,7 +54,7 @@ function GoogleOAuthCallback() {
   const navigate = useNavigate();
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [loadingMessage, setLoadingMessage] = useState('Google Drive와 정보를 교환하고 있습니다. 잠시만 기다려주세요...');
+  const [loadingMessage] = useState('Google Drive와 정보를 교환하고 있습니다. 잠시만 기다려주세요...');
 
   useEffect(() => {
     const code = searchParams.get('code');
@@ -83,26 +83,13 @@ function GoogleOAuthCallback() {
           },
         });
 
-        setLoadingMessage('Google Drive 데이터로 지식 베이스를 갱신하고 있습니다...');
-        let syncFailed = false;
-
-        try {
-          await axios.post('/api/google-drive/files/pull', {}, {
-            headers: {
-              'Authorization': `Bearer ${token}`,
-            },
-          });
-        } catch (syncError) {
-          console.error('Google Drive RAG 동기화 실패:', syncError);
-          syncFailed = true;
-        }
-
         setLoading(false);
 
         navigate('/dashboard', {
           state: {
             googleConnected: true,
-            googleSyncFailed: syncFailed,
+            startSyncSources: ['google-drive'],
+            syncOverlayMessage: 'Google Drive 데이터로 지식 베이스를 갱신하고 있습니다...'
           },
         });
       } catch (err) {

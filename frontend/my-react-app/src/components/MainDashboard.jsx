@@ -55,6 +55,48 @@ const DashboardContainer = styled.div`
   position: relative; /* 모바일 오버레이를 위해 relative */
 `;
 
+// 전체 화면을 덮는 동기화 오버레이
+const SyncOverlay = styled.div`
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3000;
+`;
+
+const SyncOverlayCard = styled.div`
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 24px 28px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.18);
+  min-width: 280px;
+  max-width: 90%;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+`;
+
+const spin = keyframes`
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+`;
+
+const SyncSpinner = styled.div`
+  width: 44px;
+  height: 44px;
+  border: 4px solid #e2e8f0;
+  border-top-color: #6200ee;
+  border-radius: 50%;
+  animation: ${spin} 1s linear infinite;
+  margin: 0 auto;
+`;
+
 // [수정] 모바일 반응형 사이드바 스타일 적용
 const Sidebar = styled.nav`
   width: 260px;
@@ -851,6 +893,7 @@ function MainDashboard() {
   const [disconnectingSource, setDisconnectingSource] = useState(null);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState(null);
+  const [syncOverlayMessage, setSyncOverlayMessage] = useState('');
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -938,10 +981,44 @@ function MainDashboard() {
   }, [location, navigate]);
 
   useEffect(() => {
-    if (location.state?.notionConnected) {
+    const state = location.state || {};
+    const { startSyncSources, syncOverlayMessage, notionConnected, googleConnected } = state;
+
+    if (startSyncSources) {
+      handleRefreshKnowledge({
+        targetSourceTypes: startSyncSources,
+        overlayMessage: syncOverlayMessage,
+        suppressStatusMessage: true,
+      }).then((result) => {
+        const hasFailure = result?.failureMessages?.length > 0 || result?.unauthorizedDetected;
+
+        if (notionConnected) {
+          setSyncMessage({
+            variant: hasFailure ? 'warning' : 'success',
+            message: hasFailure
+              ? '노션 연동은 완료되었지만 지식 베이스 갱신 중 오류가 발생했습니다. 다시 시도해주세요.'
+              : '노션이 연동되었습니다.',
+          });
+        } else if (googleConnected) {
+          setSyncMessage({
+            variant: hasFailure ? 'warning' : 'success',
+            message: hasFailure
+              ? 'Google Drive 연동은 완료되었지만 지식 베이스 갱신 중 오류가 발생했습니다. 다시 시도해주세요.'
+              : 'Google Drive가 연동되었습니다.',
+          });
+        } else if (result?.finalStatus) {
+          setSyncMessage(result.finalStatus);
+        }
+      }).finally(() => {
+        navigate(location.pathname, { replace: true, state: {} });
+      });
+      return;
+    }
+
+    if (notionConnected) {
       setSyncMessage({
-        variant: location.state.notionSyncFailed ? 'warning' : 'success',
-        message: location.state.notionSyncFailed
+        variant: state.notionSyncFailed ? 'warning' : 'success',
+        message: state.notionSyncFailed
           ? '노션 연동은 완료되었지만 지식 베이스 갱신 중 오류가 발생했습니다. 다시 시도해주세요.'
           : '노션이 연동되었습니다.',
       });
@@ -949,16 +1026,16 @@ function MainDashboard() {
       return;
     }
 
-    if (location.state?.googleConnected) {
+    if (googleConnected) {
       setSyncMessage({
-        variant: location.state.googleSyncFailed ? 'warning' : 'success',
-        message: location.state.googleSyncFailed
+        variant: state.googleSyncFailed ? 'warning' : 'success',
+        message: state.googleSyncFailed
           ? 'Google Drive 연동은 완료되었지만 지식 베이스 갱신 중 오류가 발생했습니다. 다시 시도해주세요.'
           : 'Google Drive가 연동되었습니다.',
       });
       navigate(location.pathname, { replace: true, state: {} });
     }
-  }, [location, navigate]);
+  }, [handleRefreshKnowledge, location, navigate]);
 
   useEffect(() => {
     if (chatContainerRef.current) {
@@ -990,8 +1067,12 @@ function MainDashboard() {
     }
   };
 
-  const handleRefreshKnowledge = async () => {
-    if (syncing) return;
+  const handleRefreshKnowledge = useCallback(async (options = {}) => {
+    const { targetSourceTypes, overlayMessage, suppressStatusMessage = false } = options;
+
+    if (syncing) {
+      return { started: false, reason: 'already-syncing' };
+    }
 
     const token = localStorage.getItem('accessToken');
     if (!token) {
@@ -1000,22 +1081,33 @@ function MainDashboard() {
         message: '로그인이 필요합니다. 다시 로그인해주세요.'
       });
       navigate('/login');
-      return;
+      return { started: false, reason: 'no-token' };
     }
 
     const headers = {
       'Authorization': `Bearer ${token}`
     };
 
+    const overlayText = overlayMessage || '지식 베이스를 갱신 중입니다...';
+
+    setSyncOverlayMessage(overlayText);
     setSyncing(true);
-    setSyncMessage({
-      variant: 'info',
-      message: '지식 베이스를 갱신 중입니다...'
-    });
 
     let availableConnections = connections;
+    const successMessages = [];
+    const skippedSources = [];
+    const failureMessages = [];
+    let unauthorizedDetected = false;
+    let finalStatus = null;
 
     try {
+      if (!suppressStatusMessage) {
+        setSyncMessage({
+          variant: 'info',
+          message: overlayText
+        });
+      }
+
       try {
         const fetchedConnections = await fetchConnections(token);
         if (Array.isArray(fetchedConnections)) {
@@ -1024,11 +1116,18 @@ function MainDashboard() {
       } catch (error) {
         const status = error?.response?.status;
         if (status === 401 || status === 404) {
-          setSyncMessage({
+          finalStatus = {
             variant: 'error',
             message: '세션이 만료되었습니다. 다시 로그인해주세요.'
-          });
-          return;
+          };
+          return {
+            started: true,
+            failureMessages: ['세션 만료로 갱신을 중단했습니다.'],
+            successMessages,
+            skippedSources,
+            unauthorizedDetected: true,
+            finalStatus
+          };
         }
         console.error('Failed to refresh connections before syncing:', error);
       }
@@ -1037,20 +1136,30 @@ function MainDashboard() {
         (conn) => conn && (conn.status === 'connected' || conn.connected)
       );
 
-      if (connectedSources.length === 0) {
-        setSyncMessage({
-          variant: 'warning',
-          message: '연결된 데이터 소스가 없습니다. 먼저 데이터 소스를 연동해주세요.'
-        });
-        return;
+      let sourcesToSync = connectedSources;
+      if (Array.isArray(targetSourceTypes) && targetSourceTypes.length > 0) {
+        const lowerTargets = targetSourceTypes.map((type) => (type || '').toLowerCase());
+        sourcesToSync = connectedSources.filter((conn) => lowerTargets.includes((conn?.type || '').toLowerCase()));
       }
 
-      const successMessages = [];
-      const skippedSources = [];
-      const failureMessages = [];
-      let unauthorizedDetected = false;
+      if (sourcesToSync.length === 0) {
+        finalStatus = {
+          variant: 'warning',
+          message: targetSourceTypes?.length
+            ? '선택한 데이터 소스가 연결되지 않았습니다. 연결 상태를 확인해주세요.'
+            : '연결된 데이터 소스가 없습니다. 먼저 데이터 소스를 연동해주세요.'
+        };
+        return {
+          started: true,
+          failureMessages,
+          successMessages,
+          skippedSources,
+          unauthorizedDetected,
+          finalStatus
+        };
+      }
 
-      for (const source of connectedSources) {
+      for (const source of sourcesToSync) {
         if (unauthorizedDetected) {
           break;
         }
@@ -1097,53 +1206,67 @@ function MainDashboard() {
       }
 
       if (unauthorizedDetected) {
-        setSyncMessage({
+        finalStatus = {
           variant: 'error',
           message: failureMessages.join(' ')
-        });
-        return;
-      }
-
-      if (failureMessages.length > 0) {
-        setSyncMessage({
+        };
+      } else if (failureMessages.length > 0) {
+        finalStatus = {
           variant: 'error',
           message: `일부 데이터 소스 갱신에 실패했습니다. ${failureMessages.join(' | ')}`
-        });
-        return;
-      }
-
-      if (successMessages.length > 0 && skippedSources.length > 0) {
-        setSyncMessage({
+        };
+      } else if (successMessages.length > 0 && skippedSources.length > 0) {
+        finalStatus = {
           variant: 'info',
           message: `${successMessages.join(' | ')}. ${skippedSources.join(', ')} 데이터 소스는 아직 자동 갱신을 지원하지 않습니다.`
-        });
-        return;
-      }
-
-      if (successMessages.length > 0) {
-        setSyncMessage({
+        };
+      } else if (successMessages.length > 0) {
+        finalStatus = {
           variant: 'success',
           message: `모든 연결된 데이터 소스를 갱신했습니다. ${successMessages.join(' | ')}`
-        });
-        return;
-      }
-
-      if (skippedSources.length > 0) {
-        setSyncMessage({
+        };
+      } else if (skippedSources.length > 0) {
+        finalStatus = {
           variant: 'warning',
           message: `${skippedSources.join(', ')} 데이터 소스는 아직 자동 갱신을 지원하지 않습니다.`
-        });
-        return;
+        };
+      } else {
+        finalStatus = {
+          variant: 'info',
+          message: '지식 베이스 갱신을 완료했습니다.'
+        };
       }
 
-      setSyncMessage({
-        variant: 'info',
-        message: '지식 베이스 갱신을 완료했습니다.'
-      });
+      return {
+        started: true,
+        successMessages,
+        failureMessages,
+        skippedSources,
+        unauthorizedDetected,
+        finalStatus
+      };
+    } catch (error) {
+      console.error('Knowledge base sync failed:', error);
+      finalStatus = {
+        variant: 'error',
+        message: '지식 베이스 갱신 중 오류가 발생했습니다.'
+      };
+      return {
+        started: true,
+        successMessages,
+        failureMessages: failureMessages.length ? failureMessages : ['알 수 없는 오류가 발생했습니다.'],
+        skippedSources,
+        unauthorizedDetected,
+        finalStatus
+      };
     } finally {
+      if (!suppressStatusMessage && finalStatus) {
+        setSyncMessage(finalStatus);
+      }
       setSyncing(false);
+      setSyncOverlayMessage('');
     }
-  };
+  }, [connections, fetchConnections, navigate, syncing]);
 
   const handleSendMessage = async () => {
     const query = chatInput.trim();
@@ -1316,7 +1439,17 @@ function MainDashboard() {
 
   return (
     <DashboardContainer>
-      
+
+      {syncing && (
+        <SyncOverlay>
+          <SyncOverlayCard>
+            <SyncSpinner />
+            <div style={{ fontSize: '16px', fontWeight: 600, color: '#1A202C' }}>{syncOverlayMessage || '지식 베이스를 갱신 중입니다...'}</div>
+            <div style={{ fontSize: '13px', color: '#4A5568' }}>동기화가 끝날 때까지 잠시만 기다려주세요.</div>
+          </SyncOverlayCard>
+        </SyncOverlay>
+      )}
+
       {/* [추가] 모바일 오버레이 */}
       <MobileOverlay $isOpen={isMobileSidebarOpen} onClick={toggleMobileSidebar} />
 
