@@ -55,6 +55,11 @@ const DashboardContainer = styled.div`
   position: relative; /* 모바일 오버레이를 위해 relative */
 `;
 
+const spin = keyframes`
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+`;
+
 // [수정] 모바일 반응형 사이드바 스타일 적용
 const Sidebar = styled.nav`
   width: 260px;
@@ -90,6 +95,55 @@ const MobileOverlay = styled.div`
     height: 100%;
     background-color: rgba(0, 0, 0, 0.5);
     z-index: 999;
+  }
+`;
+
+const SyncingOverlay = styled.div`
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  opacity: ${({ $visible }) => ($visible ? 1 : 0)};
+  pointer-events: ${({ $visible }) => ($visible ? 'auto' : 'none')};
+  transition: opacity 0.2s ease;
+  z-index: 1200;
+`;
+
+const SyncingCard = styled.div`
+  min-width: 280px;
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 20px 24px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+`;
+
+const SyncingSpinner = styled.div`
+  width: 32px;
+  height: 32px;
+  border: 3px solid #e2e8f0;
+  border-top-color: #4a5568;
+  border-radius: 50%;
+  animation: ${spin} 0.9s linear infinite;
+`;
+
+const SyncingTextGroup = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  strong {
+    font-size: 15px;
+    color: #1a202c;
+  }
+
+  span {
+    font-size: 13px;
+    color: #4a5568;
   }
 `;
 
@@ -851,6 +905,7 @@ function MainDashboard() {
   const [disconnectingSource, setDisconnectingSource] = useState(null);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState(null);
+  const [shouldAutoRefresh, setShouldAutoRefresh] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -928,6 +983,8 @@ function MainDashboard() {
         });
       }
 
+      setShouldAutoRefresh(true);
+
       navigate(location.pathname, { replace: true, state: {} });
     }
   }, [location, navigate]);
@@ -940,6 +997,7 @@ function MainDashboard() {
           ? '노션 연동은 완료되었지만 지식 베이스 갱신 중 오류가 발생했습니다. 다시 시도해주세요.'
           : '노션이 연동되었습니다.',
       });
+      setShouldAutoRefresh(true);
       navigate(location.pathname, { replace: true, state: {} });
       return;
     }
@@ -951,9 +1009,17 @@ function MainDashboard() {
           ? 'Google Drive 연동은 완료되었지만 지식 베이스 갱신 중 오류가 발생했습니다. 다시 시도해주세요.'
           : 'Google Drive가 연동되었습니다.',
       });
+      setShouldAutoRefresh(true);
       navigate(location.pathname, { replace: true, state: {} });
     }
   }, [location, navigate]);
+
+  useEffect(() => {
+    if (shouldAutoRefresh && !syncing) {
+      setShouldAutoRefresh(false);
+      handleRefreshKnowledge();
+    }
+  }, [handleRefreshKnowledge, shouldAutoRefresh, syncing]);
 
   useEffect(() => {
     if (chatContainerRef.current) {
@@ -985,7 +1051,7 @@ function MainDashboard() {
     }
   };
 
-  const handleRefreshKnowledge = async () => {
+  const handleRefreshKnowledge = useCallback(async () => {
     if (syncing) return;
 
     const token = getAccessToken();
@@ -1133,7 +1199,7 @@ function MainDashboard() {
     } finally {
       setSyncing(false);
     }
-  };
+  }, [connections, fetchConnections, navigate, syncing]);
 
   const handleSendMessage = async () => {
     const query = chatInput.trim();
@@ -1305,7 +1371,17 @@ function MainDashboard() {
 
   return (
     <DashboardContainer>
-      
+
+      <SyncingOverlay $visible={syncing}>
+        <SyncingCard>
+          <SyncingSpinner />
+          <SyncingTextGroup>
+            <strong>지식 베이스를 갱신하고 있습니다</strong>
+            <span>데이터 소스 동기화가 끝날 때까지 잠시만 기다려주세요.</span>
+          </SyncingTextGroup>
+        </SyncingCard>
+      </SyncingOverlay>
+
       {/* [추가] 모바일 오버레이 */}
       <MobileOverlay $isOpen={isMobileSidebarOpen} onClick={toggleMobileSidebar} />
 

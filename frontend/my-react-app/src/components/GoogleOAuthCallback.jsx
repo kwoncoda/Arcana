@@ -96,6 +96,7 @@ function GoogleOAuthCallback() {
           state: {
             googleConnected: true,
             googleSyncFailed: syncFailed,
+            triggerKnowledgeRefresh: true,
           },
         });
       } catch (err) {

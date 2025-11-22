@@ -109,6 +109,7 @@ function NotionOAuthCallback() {
           state: {
             notionConnected: true,
             notionSyncFailed: syncFailed,
+            triggerKnowledgeRefresh: true,
           },
         });
 
