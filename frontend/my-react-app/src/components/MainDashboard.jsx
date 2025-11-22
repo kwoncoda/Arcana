@@ -845,7 +845,7 @@ const getInitials = (name) => {
 };
 
 // --- 스트리밍 메시지 컴포넌트 ---
-const StreamingAIMessage = ({ content, sourcePage, sourceId, isError, onCopy }) => {
+const StreamingAIMessage = ({ content, sourcePage, sourceId, isError, onCopy, onStreamUpdate }) => {
   const [displayedText, setDisplayedText] = useState('');
   const [isComplete, setIsComplete] = useState(false);
   const streamDelay = 30;
@@ -868,6 +868,12 @@ const StreamingAIMessage = ({ content, sourcePage, sourceId, isError, onCopy }) 
       setIsComplete(true);
     }
   }, [isError, content]);
+
+  useEffect(() => {
+    if (onStreamUpdate) {
+      onStreamUpdate();
+    }
+  }, [displayedText, onStreamUpdate]);
 
   return (
     <AIMessageBubble style={isError ? {borderColor: '#FEB2B2', backgroundColor: '#FFF5F5'} : {}}>
@@ -922,6 +928,18 @@ function MainDashboard() {
   
   // [추가] 모바일 사이드바 상태
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+
+  const scrollToBottom = useCallback(() => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, []);
+
+  const handleStreamUpdate = useCallback(() => {
+    if (isAutoScrollEnabled) {
+      scrollToBottom();
+    }
+  }, [isAutoScrollEnabled, scrollToBottom]);
 
   const fetchConnections = useCallback(async (tokenOverride) => {
     setLoadingConnections(true);
@@ -1240,10 +1258,10 @@ function MainDashboard() {
   }, [handleRefreshKnowledge, shouldAutoRefresh, syncing]);
 
   useEffect(() => {
-    if (chatContainerRef.current && isAutoScrollEnabled) {
-      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    if (isAutoScrollEnabled) {
+      scrollToBottom();
     }
-  }, [chatMessages, isChatLoading, isAutoScrollEnabled]);
+  }, [chatMessages, isChatLoading, isAutoScrollEnabled, scrollToBottom]);
 
   useEffect(() => {
     const container = chatContainerRef.current;
@@ -1528,6 +1546,7 @@ function MainDashboard() {
                         sourceId={msg.sourceId}
                         isError={msg.isError}
                         onCopy={handleCopy}
+                        onStreamUpdate={handleStreamUpdate}
                       />
                     )}
                   </MessageWrapper>
