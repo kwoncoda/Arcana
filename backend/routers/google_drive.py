@@ -340,16 +340,10 @@ async def google_drive_oauth_callback(
 
     apply_oauth_tokens(db, credential, token_payload, user_info, mark_connected=True)
 
+    # 동기화는 대시보드 진입 후 프론트엔드 트리거를 통해 실행하도록 지연한다.
+    # (연동 직후 콜백에서 RAG 적재를 수행하지 않는다.)
     sync_failed = False
-    sync_result = None
-    user = db.get(User, user_idx) if user_idx else None
-
-    if user:
-        try:
-            sync_result = await pull_google_drive_files(db=db, user=user)  # type: ignore[arg-type]
-        except Exception as exc:  # pragma: no cover - defensive
-            sync_failed = True
-            sync_result = {"error": str(exc)}
+    sync_result = {"sync_deferred": True}
 
     if "application/json" in request.headers.get("accept", "").lower():
         return JSONResponse(

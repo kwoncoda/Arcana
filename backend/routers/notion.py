@@ -298,31 +298,10 @@ async def notion_oauth_callback(
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Notion 토큰 교환 실패: {e}")
 
     cred = apply_oauth_tokens(db, cred, token_json, mark_connected=True)
+    # 동기화는 대시보드 진입 이후 프론트엔드 트리거를 통해 실행하도록 지연한다.
+    # (연동 직후 콜백에서 RAG 적재를 수행하지 않는다.)
     sync_failed = False
-    sync_result = None
-
-    user = db.get(User, user_idx) if user_idx else None
-    if user:
-        try:
-            workspace = _resolve_workspace(db, user)
-            data_source = db.scalar(
-                select(DataSource).where(
-                    DataSource.workspace_idx == workspace.idx,
-                    DataSource.type == "notion",
-                )
-            )
-            if data_source:
-                sync_result = await _sync_notion_workspace(
-                    db,
-                    credential=cred,
-                    workspace=workspace,
-                    data_source=data_source,
-                )
-            else:
-                sync_failed = True
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.exception("Notion sync after OAuth failed: %s", exc)
-            sync_failed = True
+    sync_result = {"sync_deferred": True}
 
     if "application/json" in request.headers.get("accept", "").lower():
         return JSONResponse(
