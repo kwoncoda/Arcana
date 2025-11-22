@@ -1263,12 +1263,86 @@ function MainDashboard() {
     }
   }, [connections, fetchConnections, navigate, syncing]);
 
+  const runSearchRequest = useCallback(
+    async (query, pendingMessages) => {
+      const controller = new AbortController();
+      chatRequestControllerRef.current = controller;
+
+      try {
+        const res = await apiClient.post(
+          '/api/aiagent/search',
+          { query },
+          {
+            signal: controller.signal,
+          }
+        );
+
+        const { answer, notion_page_url, notion_page_id, response } = res.data || {};
+        const resolvedAnswer =
+          answer ??
+          response?.answer ??
+          res.data?.data?.answer ??
+          '답변을 불러오는 데 문제가 발생했습니다.';
+
+        const aiMessage = {
+          role: 'ai',
+          content: resolvedAnswer,
+          sourcePage: notion_page_url,
+          sourceId: notion_page_id,
+          shouldStream: false,
+        };
+
+        const completedMessages = [...pendingMessages, aiMessage];
+        persistChatState(completedMessages, false, '');
+      } catch (err) {
+        if (err.code === 'ERR_CANCELED') {
+          persistChatState(pendingMessages, false, '');
+          return;
+        }
+        console.error('AI Search Error:', err);
+        let errorMessage = '답변을 생성하는 중 오류가 발생했습니다.';
+        if (err.response) {
+          if (err.response.status === 401) {
+            clearTokens();
+            localStorage.removeItem('userNickname');
+            persistChatState(pendingMessages, false, '');
+            navigate('/login');
+            return;
+          }
+          if (err.response.data.detail) {
+            errorMessage = `오류: ${err.response.data.detail}`;
+          }
+        }
+        const errorMessages = [
+          ...pendingMessages,
+          { role: 'ai', content: errorMessage, isError: true },
+        ];
+        persistChatState(errorMessages, false, '');
+      } finally {
+        chatRequestControllerRef.current = null;
+      }
+    },
+    [navigate, persistChatState]
+  );
+
+  const ensurePendingUserMessage = useCallback(
+    (query, messages) => {
+      const alreadyHasMessage = messages.some(
+        (msg) => msg.role === 'user' && msg.content === query
+      );
+      if (alreadyHasMessage) return messages;
+      const userMessage = { role: 'user', content: query };
+      const updated = [...messages, userMessage];
+      persistChatState(updated, true, query);
+      return updated;
+    },
+    [persistChatState]
+  );
+
   const handleSendMessage = async () => {
     const query = chatInput.trim();
     if (!query || isChatLoading) return;
 
-    const controller = new AbortController();
-    chatRequestControllerRef.current = controller;
     setIsChatLoading(true);
     setChatInput('');
     if (textareaRef.current) {
@@ -1281,64 +1355,26 @@ function MainDashboard() {
       return;
     }
 
-    const userMessage = { role: 'user', content: query };
-    const pendingMessages = [...chatMessages, userMessage];
-    persistChatState(pendingMessages, true, query);
-
-    try {
-      const res = await apiClient.post(
-        '/api/aiagent/search',
-        { query },
-        {
-          signal: controller.signal,
-        }
-      );
-
-      const { answer, notion_page_url, notion_page_id, response } = res.data || {};
-      const resolvedAnswer =
-        answer ??
-        response?.answer ??
-        res.data?.data?.answer ??
-        '답변을 불러오는 데 문제가 발생했습니다.';
-
-      const aiMessage = {
-        role: 'ai',
-        content: resolvedAnswer,
-        sourcePage: notion_page_url,
-        sourceId: notion_page_id,
-        shouldStream: false,
-      };
-
-      const completedMessages = [...pendingMessages, aiMessage];
-      persistChatState(completedMessages, false, '');
-    } catch (err) {
-      if (err.code === 'ERR_CANCELED') {
-        persistChatState(pendingMessages, false, '');
-        return;
-      }
-      console.error('AI Search Error:', err);
-      let errorMessage = '답변을 생성하는 중 오류가 발생했습니다.';
-      if (err.response) {
-        if (err.response.status === 401) {
-          clearTokens();
-          localStorage.removeItem('userNickname');
-          persistChatState(pendingMessages, false, '');
-          navigate('/login');
-          return;
-        }
-        if (err.response.data.detail) {
-          errorMessage = `오류: ${err.response.data.detail}`;
-        }
-      }
-      const errorMessages = [
-        ...pendingMessages,
-        { role: 'ai', content: errorMessage, isError: true },
-      ];
-      persistChatState(errorMessages, false, '');
-    } finally {
-      chatRequestControllerRef.current = null;
-    }
+    const pendingMessages = ensurePendingUserMessage(query, chatMessages);
+    await runSearchRequest(query, pendingMessages);
   };
+
+  useEffect(() => {
+    if (!isChatLoading || !pendingQuery) return;
+
+    const token = getAccessToken();
+    if (!token) {
+      clearTokens();
+      localStorage.removeItem('userNickname');
+      return;
+    }
+
+    const normalizedMessages = ensurePendingUserMessage(pendingQuery, chatMessages);
+
+    if (!chatRequestControllerRef.current) {
+      runSearchRequest(pendingQuery, normalizedMessages);
+    }
+  }, [chatMessages, ensurePendingUserMessage, isChatLoading, pendingQuery, runSearchRequest]);
 
   useEffect(() => {
     if (shouldAutoRefresh && !syncing) {
