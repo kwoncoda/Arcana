@@ -167,6 +167,56 @@ def _divider_block() -> Dict[str, Any]:
     return {"object": "block", "type": "divider", "divider": {}}
 
 
+def _split_table_cells(line: str) -> List[str]:
+    """테이블 한 줄을 셀 단위로 분할한다."""
+
+    content = line.strip()
+    if content.startswith("|"):
+        content = content[1:]
+    if content.endswith("|"):
+        content = content[:-1]
+    return [cell.strip() for cell in content.split("|")]
+
+
+def _table_row_block(cells: List[str], *, width: int) -> Dict[str, Any]:
+    """Notion table_row 블록을 생성한다."""
+
+    padded = cells + [""] * (max(0, width - len(cells)))
+    return {
+        "object": "block",
+        "type": "table_row",
+        "table_row": {
+            "cells": [[*_rich_text(cell)] for cell in padded],
+        },
+    }
+
+
+def _table_block(header: List[str], rows: List[List[str]]) -> Dict[str, Any]:
+    """Notion table 블록을 생성한다."""
+
+    width = max([len(header), *[len(row) for row in rows]] or [0])
+    children = [_table_row_block(header, width=width)]
+    for row in rows:
+        children.append(_table_row_block(row, width=width))
+    return {
+        "object": "block",
+        "type": "table",
+        "table": {
+            "table_width": width,
+            "has_column_header": True,
+            "has_row_header": False,
+            "children": children,
+        },
+    }
+
+
+def _is_table_divider(line: str) -> bool:
+    """마크다운 테이블 구분 라인인지 확인한다."""
+
+    stripped = line.strip()
+    return bool(stripped and "|" in stripped and re.fullmatch(r"\|?\s*:?[-]+.*", stripped))
+
+
 def _markdown_to_blocks(markdown: str) -> List[Dict[str, Any]]:
     """간단한 마크다운을 노션 블록 리스트로 변환한다."""
 
@@ -175,8 +225,10 @@ def _markdown_to_blocks(markdown: str) -> List[Dict[str, Any]]:
     in_code = False
     code_lines: List[str] = []
     code_lang: Optional[str] = None
+    index = 0
 
-    for raw_line in lines:
+    while index < len(lines):
+        raw_line = lines[index]
         line = raw_line.rstrip()
         if line.strip().startswith("```"):
             fence_lang = line.strip()[3:].strip() or None
@@ -189,14 +241,30 @@ def _markdown_to_blocks(markdown: str) -> List[Dict[str, Any]]:
                 in_code = False
                 code_lines = []
                 code_lang = None
+            index += 1
             continue
 
         if in_code:
             code_lines.append(raw_line)
+            index += 1
             continue
 
         stripped = line.strip()
         if not stripped:
+            index += 1
+            continue
+
+        if (index + 1) < len(lines) and "|" in stripped and _is_table_divider(lines[index + 1]):
+            header_cells = _split_table_cells(stripped)
+            index += 2
+            body_rows: List[List[str]] = []
+            while index < len(lines):
+                body_line = lines[index]
+                if "|" not in body_line:
+                    break
+                body_rows.append(_split_table_cells(body_line))
+                index += 1
+            blocks.append(_table_block(header_cells, body_rows))
             continue
 
         if stripped in {"---", "***", "___"} or set(stripped) == {"-"}:
@@ -217,6 +285,8 @@ def _markdown_to_blocks(markdown: str) -> List[Dict[str, Any]]:
                 blocks.append(_paragraph_block(stripped))
         else:
             blocks.append(_paragraph_block(stripped))
+
+        index += 1
 
     if in_code:
         blocks.append(_code_block("\n".join(code_lines), code_lang))
