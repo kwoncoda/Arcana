@@ -7,8 +7,16 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableSequence
 from langchain_openai import AzureChatOpenAI
+from openai import BadRequestError, LengthFinishReasonError
 
 from .ai_config import _final_answer_load_chat_config
+
+
+def _is_token_limit_error(exc: Exception) -> bool:
+    if isinstance(exc, (LengthFinishReasonError, BadRequestError)):
+        return True
+    msg = f"{exc}"
+    return ("max_tokens" in msg) or ("model output limit" in msg) or ("LengthFinishReasonError" in msg)
 
 
 class FinalAnswerAgent:
@@ -42,9 +50,32 @@ class FinalAnswerAgent:
                 ),
             ]
         )
+        self._short_prompt = ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    (
+                        "당신은 Arcana의 응답 요약기입니다."
+                        " 반드시 아주 짧은 한국어 문장 2~3줄만 반환하세요."
+                        " 새로운 사실을 추가하지 말고 초안 내용만 보존하여 핵심만 정리하세요."
+                    ),
+                ),
+                (
+                    "human",
+                    (
+                        "모드: {mode}\n"
+                        "워크스페이스: {workspace_name}\n"
+                        "사용자 질문: {question}\n"
+                        "초안(answer_draft):\n{answer_draft}\n\n"
+                        "핵심만 2~3문장으로 아주 짧게 요약하세요."
+                    ),
+                ),
+            ]
+        )
         self._parser = StrOutputParser()
         self._llm: Optional[AzureChatOpenAI] = None
         self._chain: Optional[RunnableSequence] = None
+        self._short_chain: Optional[RunnableSequence] = None
 
     def _ensure_llm(self) -> AzureChatOpenAI:
         if self._llm is None:
@@ -54,7 +85,7 @@ class FinalAnswerAgent:
                 api_key=config["api_key"],
                 api_version=config["api_version"],
                 azure_deployment=config["deployment"],
-                model=config["model"],
+                model="gpt-4o",
                 temperature=0.2,
                 max_tokens=600,
                 max_retries=3,
@@ -66,6 +97,21 @@ class FinalAnswerAgent:
             llm = self._ensure_llm()
             self._chain = self._prompt | llm | self._parser
         return self._chain
+
+    def _ensure_short_chain(self) -> RunnableSequence:
+        if self._short_chain is None:
+            llm = self._ensure_llm().bind(max_tokens=256)
+            self._short_chain = self._short_prompt | llm | self._parser
+        return self._short_chain
+
+    @staticmethod
+    def _clamp(text: str, max_chars: int = 1200) -> str:
+        if len(text) <= max_chars:
+            return text
+        return text[: max_chars - 3] + "..."
+
+    def _safe_message(self, answer_draft: str) -> str:
+        return answer_draft.strip() or "응답이 길어 간단히 요약본만 먼저 전달해요. 잠시 후 다시 시도해 주세요."
 
     async def craft_final_answer(
         self,
@@ -89,13 +135,28 @@ class FinalAnswerAgent:
 
         try:
             rendered = await chain.ainvoke(payload)
-        except Exception:
-            # 편집 실패 시 초안을 그대로 사용해 빈 응답을 방지한다.
-            return answer_draft.strip() or "지금은 답변을 준비하지 못했어요. 다시 한번 말씀해 주세요."
+            refined = rendered.strip()
+            if refined:
+                return refined
+        except Exception as exc:
+            if _is_token_limit_error(exc):
+                short_chain = self._ensure_short_chain()
+                try:
+                    refined = (await short_chain.ainvoke(payload)).strip()
+                    if refined:
+                        return refined
+                except Exception as exc_short:
+                    if _is_token_limit_error(exc_short):
+                        clamped_payload = {**payload, "answer_draft": self._clamp(answer_draft)}
+                        try:
+                            refined = (await short_chain.ainvoke(clamped_payload)).strip()
+                            if refined:
+                                return refined
+                        except Exception:
+                            return self._safe_message(answer_draft)
+                    return self._safe_message(answer_draft)
+            return self._safe_message(answer_draft)
 
-        refined = rendered.strip()
-        if refined:
-            return refined
         # 모델이 빈 문자열을 반환한 경우 초안을 그대로 전달한다.
-        return answer_draft.strip() or "지금은 답변을 준비하지 못했어요. 다시 한번 말씀해 주세요."
+        return self._safe_message(answer_draft)
 
