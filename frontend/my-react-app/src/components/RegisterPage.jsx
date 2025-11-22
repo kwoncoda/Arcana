@@ -133,6 +133,18 @@ const ErrorMessage = styled.p`
   margin: 0 0 16px 0;
 `;
 
+const SuccessMessage = styled.p`
+  font-size: 14px;
+  color: #2E7D32;
+  background-color: #E8F5E9;
+  border: 1px solid #A5D6A7;
+  border-radius: 8px;
+  padding: 12px;
+  width: 100%;
+  text-align: center;
+  margin: 0 0 16px 0;
+`;
+
 const Footer = styled.footer`
   margin-top: 30px;
   font-size: 12px;
@@ -163,6 +175,7 @@ function RegisterPage() {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [successMessage, setSuccessMessage] = useState(null);
   
   const navigate = useNavigate();
 
@@ -178,6 +191,7 @@ function RegisterPage() {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    setSuccessMessage(null);
 
     const payload = { ...formData };
     if (payload.type === 'personal') {
@@ -192,11 +206,11 @@ function RegisterPage() {
 
     try {
       const response = await apiClient.post(apiUrl, payload);
-      
+
       console.log('Register Success:', response);
-      alert('회원가입이 완료되었습니다. 로그인 페이지로 이동합니다.');
-      navigate('/login');
-      
+      setSuccessMessage('회원가입이 완료되었습니다. 로그인 페이지로 이동합니다.');
+      setTimeout(() => navigate('/login'), 1000);
+
     } catch (err) {
       if (err.response && err.response.data && err.response.data.detail) {
         setError(err.response.data.detail);
@@ -218,6 +232,7 @@ function RegisterPage() {
 
       <Title>회원가입</Title>
 
+      {successMessage && <SuccessMessage>{successMessage}</SuccessMessage>}
       {error && <ErrorMessage>{error}</ErrorMessage>}
 
       <Form onSubmit={handleSubmit}>
