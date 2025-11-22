@@ -111,6 +111,10 @@ const SyncingOverlay = styled.div`
   z-index: 1200;
 `;
 
+const ChatLoadingOverlay = styled(SyncingOverlay)`
+  z-index: 1250;
+`;
+
 const SyncingCard = styled.div`
   min-width: 280px;
   background: #ffffff;
@@ -120,15 +124,6 @@ const SyncingCard = styled.div`
   display: flex;
   align-items: center;
   gap: 14px;
-`;
-
-const SyncingSpinner = styled.div`
-  width: 32px;
-  height: 32px;
-  border: 3px solid #e2e8f0;
-  border-top-color: #4a5568;
-  border-radius: 50%;
-  animation: ${spin} 0.9s linear infinite;
 `;
 
 const SyncingTextGroup = styled.div`
@@ -144,6 +139,57 @@ const SyncingTextGroup = styled.div`
   span {
     font-size: 13px;
     color: #4a5568;
+  }
+`;
+
+const ChatLoadingCard = styled(SyncingCard)`
+  max-width: 420px;
+  width: 90%;
+  text-align: center;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+
+  ${SyncingTextGroup} {
+    align-items: center;
+  }
+`;
+
+const SyncingSpinner = styled.div`
+  width: 32px;
+  height: 32px;
+  border: 3px solid #e2e8f0;
+  border-top-color: #4a5568;
+  border-radius: 50%;
+  aspect-ratio: 1 / 1;
+  animation: ${spin} 0.9s linear infinite;
+`;
+
+const ChatOverlayActions = styled.div`
+  display: flex;
+  justify-content: center;
+  margin-left: auto;
+  margin-right: auto;
+`;
+
+const ChatOverlayButton = styled.button`
+  margin-top: 8px;
+  padding: 10px 16px;
+  background-color: #F56565;
+  color: #fff;
+  border: 1px solid #E53E3E;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease;
+
+  &:hover {
+    background-color: #E53E3E;
+    color: #fff;
+  }
+
+  &:active {
+    background-color: #C53030;
   }
 `;
 
@@ -1415,6 +1461,21 @@ function MainDashboard() {
   return (
     <DashboardContainer>
 
+      <ChatLoadingOverlay $visible={isChatLoading}>
+        <ChatLoadingCard>
+          <SyncingSpinner />
+          <SyncingTextGroup>
+            <strong>답변 중입니다</strong>
+            <span>잠시만 기다려주세요.</span>
+          </SyncingTextGroup>
+          <ChatOverlayActions>
+            <ChatOverlayButton type="button" onClick={handleStopMessage}>
+              중지
+            </ChatOverlayButton>
+          </ChatOverlayActions>
+        </ChatLoadingCard>
+      </ChatLoadingOverlay>
+
       <SyncingOverlay $visible={syncing}>
         <SyncingCard>
           <SyncingSpinner />
@@ -1589,13 +1650,12 @@ function MainDashboard() {
                   <span>@</span>
                 </ToolbarLeft>
                 <ToolbarRight>
-                  <span style={{fontSize: 12, color: '#718096'}}>Tokens 0/4000</span>
                   <SendButton
                     onClick={isChatLoading ? handleStopMessage : handleSendMessage}
                     $variant={isChatLoading ? 'stop' : 'send'}
                   >
                     {isChatLoading ? <Square size={16} /> : <Send size={16} />}
-                    {isChatLoading ? '정지' : '전송'}
+                    {isChatLoading ? '중지' : '전송'}
                   </SendButton>
                 </ToolbarRight>
               </ChatToolbar>
