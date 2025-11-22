@@ -1338,7 +1338,10 @@ function MainDashboard() {
     const endpoint = getDisconnectEndpoint(connection);
 
     if (!endpoint) {
-      alert('이 데이터 소스는 아직 연결 해제를 지원하지 않습니다.');
+      setSyncMessage({
+        variant: 'warning',
+        message: `${details.name} 데이터 소스는 아직 연결 해제를 지원하지 않습니다.`,
+      });
       return;
     }
 
@@ -1368,7 +1371,12 @@ function MainDashboard() {
       }
 
       const detail = err?.response?.data?.detail;
-      alert(detail ? `연결 해제에 실패했습니다: ${detail}` : '연결 해제에 실패했습니다. 잠시 후 다시 시도해주세요.');
+      setSyncMessage({
+        variant: 'error',
+        message: detail
+          ? `연결 해제에 실패했습니다: ${detail}`
+          : '연결 해제에 실패했습니다. 잠시 후 다시 시도해주세요.',
+      });
     } finally {
       setDisconnectingSource(null);
     }
