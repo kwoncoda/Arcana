@@ -130,6 +130,13 @@ const ChatLoadingCard = styled(SyncingCard)`
   max-width: 420px;
   width: 90%;
   text-align: center;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+
+  ${SyncingTextGroup} {
+    align-items: center;
+  }
 `;
 
 const SyncingSpinner = styled.div`
@@ -1643,13 +1650,12 @@ function MainDashboard() {
                   <span>@</span>
                 </ToolbarLeft>
                 <ToolbarRight>
-                  <span style={{fontSize: 12, color: '#718096'}}>Tokens 0/4000</span>
                   <SendButton
                     onClick={isChatLoading ? handleStopMessage : handleSendMessage}
                     $variant={isChatLoading ? 'stop' : 'send'}
                   >
                     {isChatLoading ? <Square size={16} /> : <Send size={16} />}
-                    {isChatLoading ? '정지' : '전송'}
+                    {isChatLoading ? '중지' : '전송'}
                   </SendButton>
                 </ToolbarRight>
               </ChatToolbar>
