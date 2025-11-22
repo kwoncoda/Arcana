@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import styled, { keyframes } from 'styled-components';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
-import axios from 'axios';
+import apiClient, { clearTokens, getAccessToken } from '../api/client';
 import { 
   Home, 
   MessageSquare, 
@@ -55,6 +55,11 @@ const DashboardContainer = styled.div`
   position: relative; /* 모바일 오버레이를 위해 relative */
 `;
 
+const spin = keyframes`
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+`;
+
 // [수정] 모바일 반응형 사이드바 스타일 적용
 const Sidebar = styled.nav`
   width: 260px;
@@ -90,6 +95,101 @@ const MobileOverlay = styled.div`
     height: 100%;
     background-color: rgba(0, 0, 0, 0.5);
     z-index: 999;
+  }
+`;
+
+const SyncingOverlay = styled.div`
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  opacity: ${({ $visible }) => ($visible ? 1 : 0)};
+  pointer-events: ${({ $visible }) => ($visible ? 'auto' : 'none')};
+  transition: opacity 0.2s ease;
+  z-index: 1200;
+`;
+
+const ChatLoadingOverlay = styled(SyncingOverlay)`
+  z-index: 1250;
+`;
+
+const SyncingCard = styled.div`
+  min-width: 280px;
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 20px 24px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+`;
+
+const SyncingTextGroup = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  strong {
+    font-size: 15px;
+    color: #1a202c;
+  }
+
+  span {
+    font-size: 13px;
+    color: #4a5568;
+  }
+`;
+
+const ChatLoadingCard = styled(SyncingCard)`
+  max-width: 420px;
+  width: 90%;
+  text-align: center;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+
+  ${SyncingTextGroup} {
+    align-items: center;
+  }
+`;
+
+const SyncingSpinner = styled.div`
+  width: 32px;
+  height: 32px;
+  border: 3px solid #e2e8f0;
+  border-top-color: #4a5568;
+  border-radius: 50%;
+  aspect-ratio: 1 / 1;
+  animation: ${spin} 0.9s linear infinite;
+`;
+
+const ChatOverlayActions = styled.div`
+  display: flex;
+  justify-content: center;
+  margin-left: auto;
+  margin-right: auto;
+`;
+
+const ChatOverlayButton = styled.button`
+  margin-top: 8px;
+  padding: 10px 16px;
+  background-color: #F56565;
+  color: #fff;
+  border: 1px solid #E53E3E;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease;
+
+  &:hover {
+    background-color: #E53E3E;
+    color: #fff;
+  }
+
+  &:active {
+    background-color: #C53030;
   }
 `;
 
@@ -189,6 +289,82 @@ const SyncStatusBar = styled.div`
   background-color: ${({ $variant }) => (SYNC_STATUS_COLORS[$variant] || SYNC_STATUS_COLORS.info).bg};
   border: 1px solid ${({ $variant }) => (SYNC_STATUS_COLORS[$variant] || SYNC_STATUS_COLORS.info).border};
   color: ${({ $variant }) => (SYNC_STATUS_COLORS[$variant] || SYNC_STATUS_COLORS.info).color};
+`;
+
+const DisconnectConfirmBar = styled.div`
+  margin: 12px 24px 0;
+  border-radius: 8px;
+  padding: 12px 16px;
+  background-color: #fff5f5;
+  border: 1px solid #feb2b2;
+  color: #742a2a;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+`;
+
+const DisconnectMessage = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+
+  strong {
+    font-size: 14px;
+  }
+
+  span {
+    font-size: 13px;
+    color: #9b2c2c;
+  }
+`;
+
+const DisconnectActions = styled.div`
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+`;
+
+const SecondaryButton = styled.button`
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #2d3748;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+
+  &:hover {
+    background: #edf2f7;
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
+  }
+`;
+
+const DangerButton = styled.button`
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: none;
+  background: #e53e3e;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+
+  &:hover {
+    background: #c53030;
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
+  }
 `;
 
 const ChatWrapper = styled.div`
@@ -791,7 +967,7 @@ const getInitials = (name) => {
 };
 
 // --- 스트리밍 메시지 컴포넌트 ---
-const StreamingAIMessage = ({ content, sourcePage, sourceId, isError, onCopy }) => {
+const StreamingAIMessage = ({ content, sourcePage, sourceId, isError, onCopy, onStreamUpdate }) => {
   const [displayedText, setDisplayedText] = useState('');
   const [isComplete, setIsComplete] = useState(false);
   const streamDelay = 30;
@@ -814,6 +990,12 @@ const StreamingAIMessage = ({ content, sourcePage, sourceId, isError, onCopy }) 
       setIsComplete(true);
     }
   }, [isError, content]);
+
+  useEffect(() => {
+    if (onStreamUpdate) {
+      onStreamUpdate();
+    }
+  }, [displayedText, onStreamUpdate]);
 
   return (
     <AIMessageBubble style={isError ? {borderColor: '#FEB2B2', backgroundColor: '#FFF5F5'} : {}}>
@@ -849,8 +1031,10 @@ function MainDashboard() {
   const [connections, setConnections] = useState([]);
   const [loadingConnections, setLoadingConnections] = useState(true);
   const [disconnectingSource, setDisconnectingSource] = useState(null);
+  const [pendingDisconnect, setPendingDisconnect] = useState(null);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState(null);
+  const [shouldAutoRefresh, setShouldAutoRefresh] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -860,6 +1044,7 @@ function MainDashboard() {
 
   const [chatMessages, setChatMessages] = useState([]);
   const [isChatLoading, setIsChatLoading] = useState(false);
+  const [isAutoScrollEnabled, setIsAutoScrollEnabled] = useState(true);
   const chatContainerRef = useRef(null);
   const textareaRef = useRef(null);
   const chatRequestControllerRef = useRef(null);
@@ -867,20 +1052,28 @@ function MainDashboard() {
   // [추가] 모바일 사이드바 상태
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
+  const scrollToBottom = useCallback(() => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, []);
+
+  const handleStreamUpdate = useCallback(() => {
+    if (isAutoScrollEnabled) {
+      scrollToBottom();
+    }
+  }, [isAutoScrollEnabled, scrollToBottom]);
+
   const fetchConnections = useCallback(async (tokenOverride) => {
     setLoadingConnections(true);
     try {
-      const token = tokenOverride || localStorage.getItem('accessToken');
+      const token = tokenOverride || getAccessToken();
       if (!token) {
         navigate('/login');
         return [];
       }
 
-      const res = await axios.get('/api/users/connections', {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
+      const res = await apiClient.get('/api/users/connections');
 
       const fetchedConnections = res.data.connections || [];
       setConnections(fetchedConnections);
@@ -889,8 +1082,7 @@ function MainDashboard() {
       console.error('Failed to fetch connections:', err);
       const status = err?.response?.status;
       if (status === 401 || status === 404) {
-        localStorage.removeItem('accessToken');
-        localStorage.removeItem('refreshToken');
+        clearTokens();
         localStorage.removeItem('userNickname');
         navigate('/login');
       }
@@ -933,6 +1125,8 @@ function MainDashboard() {
         });
       }
 
+      setShouldAutoRefresh(true);
+
       navigate(location.pathname, { replace: true, state: {} });
     }
   }, [location, navigate]);
@@ -945,6 +1139,7 @@ function MainDashboard() {
           ? '노션 연동은 완료되었지만 지식 베이스 갱신 중 오류가 발생했습니다. 다시 시도해주세요.'
           : '노션이 연동되었습니다.',
       });
+      setShouldAutoRefresh(true);
       navigate(location.pathname, { replace: true, state: {} });
       return;
     }
@@ -956,44 +1151,15 @@ function MainDashboard() {
           ? 'Google Drive 연동은 완료되었지만 지식 베이스 갱신 중 오류가 발생했습니다. 다시 시도해주세요.'
           : 'Google Drive가 연동되었습니다.',
       });
+      setShouldAutoRefresh(true);
       navigate(location.pathname, { replace: true, state: {} });
     }
   }, [location, navigate]);
 
-  useEffect(() => {
-    if (chatContainerRef.current) {
-      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
-    }
-  }, [chatMessages, isChatLoading]);
-
-  const autoResizeTextarea = (element) => {
-    element.style.height = 'auto'; 
-    element.style.height = `${element.scrollHeight}px`; 
-  };
-
-  const handleTextareaChange = (e) => {
-    setChatInput(e.target.value);
-    autoResizeTextarea(e.target);
-  };
-
-  // [수정] 로그아웃 로직 제거 (MyPage에서 처리)
-
-  // [추가] 사이드바 토글 함수
-  const toggleMobileSidebar = () => {
-    setIsMobileSidebarOpen(!isMobileSidebarOpen);
-  };
-
-  // [추가] 사이드바 메뉴 클릭 시 닫기
-  const handleNavClick = () => {
-    if (window.innerWidth <= 768) {
-      setIsMobileSidebarOpen(false);
-    }
-  };
-
-  const handleRefreshKnowledge = async () => {
+  const handleRefreshKnowledge = useCallback(async () => {
     if (syncing) return;
 
-    const token = localStorage.getItem('accessToken');
+    const token = getAccessToken();
     if (!token) {
       setSyncMessage({
         variant: 'error',
@@ -1002,10 +1168,6 @@ function MainDashboard() {
       navigate('/login');
       return;
     }
-
-    const headers = {
-      'Authorization': `Bearer ${token}`
-    };
 
     setSyncing(true);
     setSyncMessage({
@@ -1067,7 +1229,7 @@ function MainDashboard() {
           }
 
           try {
-            const response = await axios.post(pullEndpoint, {}, { headers });
+            const response = await apiClient.post(pullEndpoint, {});
             const ingested = response?.data?.ingested_chunks;
             if (typeof ingested === 'number') {
               successMessages.push(`${displayName}: ${ingested}개 청크 갱신`);
@@ -1078,8 +1240,7 @@ function MainDashboard() {
             const status = error?.response?.status;
             if (status === 401) {
               unauthorizedDetected = true;
-              localStorage.removeItem('accessToken');
-              localStorage.removeItem('refreshToken');
+              clearTokens();
               localStorage.removeItem('userNickname');
               navigate('/login');
               failureMessages.push(`${displayName}: 인증이 만료되었습니다. 다시 로그인해주세요.`);
@@ -1143,7 +1304,7 @@ function MainDashboard() {
     } finally {
       setSyncing(false);
     }
-  };
+  }, [connections, fetchConnections, navigate, syncing]);
 
   const handleSendMessage = async () => {
     const query = chatInput.trim();
@@ -1157,7 +1318,7 @@ function MainDashboard() {
       autoResizeTextarea(textareaRef.current);
     }
 
-    const token = localStorage.getItem('accessToken');
+    const token = getAccessToken();
     if (!token) {
       navigate('/login');
       return;
@@ -1166,11 +1327,10 @@ function MainDashboard() {
     setChatMessages((prev) => [...prev, { role: 'user', content: query }]);
 
     try {
-      const res = await axios.post(
+      const res = await apiClient.post(
         '/api/aiagent/search',
         { query },
         {
-          headers: { 'Authorization': `Bearer ${token}` },
           signal: controller.signal,
         }
       );
@@ -1194,6 +1354,8 @@ function MainDashboard() {
       let errorMessage = '답변을 생성하는 중 오류가 발생했습니다.';
       if (err.response) {
         if (err.response.status === 401) {
+          clearTokens();
+          localStorage.removeItem('userNickname');
           navigate('/login');
           return;
         }
@@ -1208,6 +1370,59 @@ function MainDashboard() {
     } finally {
       setIsChatLoading(false);
       chatRequestControllerRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    if (shouldAutoRefresh && !syncing) {
+      setShouldAutoRefresh(false);
+      handleRefreshKnowledge();
+    }
+  }, [handleRefreshKnowledge, shouldAutoRefresh, syncing]);
+
+  useEffect(() => {
+    if (isAutoScrollEnabled) {
+      scrollToBottom();
+    }
+  }, [chatMessages, isChatLoading, isAutoScrollEnabled, scrollToBottom]);
+
+  useEffect(() => {
+    const container = chatContainerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      const isAtBottom = Math.abs(scrollHeight - scrollTop - clientHeight) < 10;
+      setIsAutoScrollEnabled(isAtBottom);
+    };
+
+    container.addEventListener('scroll', handleScroll);
+    return () => {
+      container.removeEventListener('scroll', handleScroll);
+    };
+  }, []);
+
+  const autoResizeTextarea = (element) => {
+    element.style.height = 'auto';
+    element.style.height = `${element.scrollHeight}px`;
+  };
+
+  const handleTextareaChange = (e) => {
+    setChatInput(e.target.value);
+    autoResizeTextarea(e.target);
+  };
+
+  // [수정] 로그아웃 로직 제거 (MyPage에서 처리)
+
+  // [추가] 사이드바 토글 함수
+  const toggleMobileSidebar = () => {
+    setIsMobileSidebarOpen(!isMobileSidebarOpen);
+  };
+
+  // [추가] 사이드바 메뉴 클릭 시 닫기
+  const handleNavClick = () => {
+    if (window.innerWidth <= 768) {
+      setIsMobileSidebarOpen(false);
     }
   };
 
@@ -1239,22 +1454,33 @@ function MainDashboard() {
     document.body.removeChild(textArea);
   };
 
-  const handleDisconnectConnection = async (event, connection) => {
+  const handleDisconnectConnection = (event, connection) => {
     event?.stopPropagation?.();
 
     const details = getProviderDetails(connection);
     const endpoint = getDisconnectEndpoint(connection);
 
     if (!endpoint) {
-      alert('이 데이터 소스는 아직 연결 해제를 지원하지 않습니다.');
+      setSyncMessage({
+        variant: 'warning',
+        message: `${details.name} 데이터 소스는 아직 연결 해제를 지원하지 않습니다.`,
+      });
       return;
     }
 
-    const confirmMessage = `${details.name} 데이터 소스 연결을 끊으시겠습니까?`;
-    const shouldDisconnect = window.confirm(confirmMessage);
-    if (!shouldDisconnect) return;
+    setPendingDisconnect({ connection, endpoint, details });
+  };
 
-    const token = localStorage.getItem('accessToken');
+  const cancelDisconnectRequest = () => {
+    setPendingDisconnect(null);
+  };
+
+  const confirmDisconnectConnection = async () => {
+    if (!pendingDisconnect) return;
+
+    const { connection, endpoint, details } = pendingDisconnect;
+
+    const token = getAccessToken();
     if (!token) {
       navigate('/login');
       return;
@@ -1262,25 +1488,37 @@ function MainDashboard() {
 
     try {
       setDisconnectingSource(connection?.type || details.name);
-      await axios.post(endpoint, {}, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
+      setSyncMessage({
+        variant: 'info',
+        message: `${details.name} 연결을 해제하는 중입니다...`,
       });
+      await apiClient.post(endpoint, {});
 
       await fetchConnections(token);
+      setSyncMessage({
+        variant: 'success',
+        message: `${details.name} 연결이 해제되었습니다.`,
+      });
     } catch (err) {
       console.error('Failed to disconnect data source:', err);
       const status = err?.response?.status;
       if (status === 401 || status === 404) {
+        clearTokens();
+        localStorage.removeItem('userNickname');
         navigate('/login');
         return;
       }
 
       const detail = err?.response?.data?.detail;
-      alert(detail ? `연결 해제에 실패했습니다: ${detail}` : '연결 해제에 실패했습니다. 잠시 후 다시 시도해주세요.');
+      setSyncMessage({
+        variant: 'error',
+        message: detail
+          ? `연결 해제에 실패했습니다: ${detail}`
+          : '연결 해제에 실패했습니다. 잠시 후 다시 시도해주세요.',
+      });
     } finally {
       setDisconnectingSource(null);
+      setPendingDisconnect(null);
     }
   };
 
@@ -1316,7 +1554,32 @@ function MainDashboard() {
 
   return (
     <DashboardContainer>
-      
+
+      <ChatLoadingOverlay $visible={isChatLoading}>
+        <ChatLoadingCard>
+          <SyncingSpinner />
+          <SyncingTextGroup>
+            <strong>답변 중입니다</strong>
+            <span>잠시만 기다려주세요.</span>
+          </SyncingTextGroup>
+          <ChatOverlayActions>
+            <ChatOverlayButton type="button" onClick={handleStopMessage}>
+              중지
+            </ChatOverlayButton>
+          </ChatOverlayActions>
+        </ChatLoadingCard>
+      </ChatLoadingOverlay>
+
+      <SyncingOverlay $visible={syncing}>
+        <SyncingCard>
+          <SyncingSpinner />
+          <SyncingTextGroup>
+            <strong>지식 베이스를 갱신하고 있습니다</strong>
+            <span>데이터 소스 동기화가 끝날 때까지 잠시만 기다려주세요.</span>
+          </SyncingTextGroup>
+        </SyncingCard>
+      </SyncingOverlay>
+
       {/* [추가] 모바일 오버레이 */}
       <MobileOverlay $isOpen={isMobileSidebarOpen} onClick={toggleMobileSidebar} />
 
@@ -1416,6 +1679,31 @@ function MainDashboard() {
           </SyncStatusBar>
         )}
 
+        {pendingDisconnect && (
+          <DisconnectConfirmBar>
+            <DisconnectMessage>
+              <strong>{pendingDisconnect.details.name} 연결 해제</strong>
+              <span>해제 시 더 이상 해당 데이터 소스가 동기화되지 않습니다. 진행하시겠습니까?</span>
+            </DisconnectMessage>
+            <DisconnectActions>
+              <SecondaryButton
+                type="button"
+                onClick={cancelDisconnectRequest}
+                disabled={disconnectingSource !== null}
+              >
+                취소
+              </SecondaryButton>
+              <DangerButton
+                type="button"
+                onClick={confirmDisconnectConnection}
+                disabled={disconnectingSource !== null}
+              >
+                연결 해제
+              </DangerButton>
+            </DisconnectActions>
+          </DisconnectConfirmBar>
+        )}
+
         <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
           
           <ChatWrapper>
@@ -1446,6 +1734,7 @@ function MainDashboard() {
                         sourceId={msg.sourceId}
                         isError={msg.isError}
                         onCopy={handleCopy}
+                        onStreamUpdate={handleStreamUpdate}
                       />
                     )}
                   </MessageWrapper>
@@ -1480,13 +1769,12 @@ function MainDashboard() {
                   <span>@</span>
                 </ToolbarLeft>
                 <ToolbarRight>
-                  <span style={{fontSize: 12, color: '#718096'}}>Tokens 0/4000</span>
                   <SendButton
                     onClick={isChatLoading ? handleStopMessage : handleSendMessage}
                     $variant={isChatLoading ? 'stop' : 'send'}
                   >
                     {isChatLoading ? <Square size={16} /> : <Send size={16} />}
-                    {isChatLoading ? '정지' : '전송'}
+                    {isChatLoading ? '중지' : '전송'}
                   </SendButton>
                 </ToolbarRight>
               </ChatToolbar>

@@ -99,7 +99,40 @@ def _decision_load_chat_config() -> Dict[str, str]:
         "deployment": deployment,
         "model": model or deployment,
     }
-    
+
+
+def _create_file_load_chat_config() -> Dict[str, str]:
+    """환경 변수에서 파일 생성용 Azure Chat 설정을 불러온다."""
+
+    api_key = os.getenv("CREATE_FILE_AZURE_OPENAI_API_KEY")
+    endpoint = os.getenv("CREATE_FILE_AZURE_OPENAI_ENDPOINT")
+    api_version = os.getenv("CREATE_FILE_AZURE_OPENAI_API_VERSION")
+    deployment = os.getenv("CREATE_FILE_AZURE_OPENAI_CHAT_DEPLOYMENT")
+    model = os.getenv("CREATE_FILE_AZURE_OPENAI_CHAT_MODEL")
+
+    missing = [
+        name
+        for name, value in [
+            ("CREATE_FILE_AZURE_OPENAI_API_KEY", api_key),
+            ("CREATE_FILE_AZURE_OPENAI_ENDPOINT", endpoint),
+            ("CREATE_FILE_AZURE_OPENAI_API_VERSION", api_version),
+            ("CREATE_FILE_AZURE_OPENAI_CHAT_DEPLOYMENT", deployment),
+        ]
+        if not value
+    ]
+    if missing:
+        raise RuntimeError(
+            "다음 Azure OpenAI 채팅 환경 변수를 설정하세요: " + ", ".join(missing)
+        )
+
+    return {
+        "api_key": api_key,
+        "endpoint": endpoint,
+        "api_version": api_version,
+        "deployment": deployment,
+        "model": model or deployment,
+    }
+
 
 def _EM_load_azure_openai_config() -> dict[str, str]:
     """Azure OpenAI 임베딩 구성을 로드하고 검증"""

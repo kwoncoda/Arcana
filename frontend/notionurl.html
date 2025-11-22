@@ -8,6 +8,10 @@
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 24px; }
     input, button { font-size: 16px; padding: 8px; }
     #log { white-space: pre-wrap; background: #f6f8fa; padding: 12px; border-radius: 8px; }
+    #message { margin-top: 12px; padding: 12px; border-radius: 8px; font-weight: 600; display: none; }
+    #message.success { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
+    #message.error { background: #fff5f5; color: #b71c1c; border: 1px solid #ffcdd2; }
+    #message.info { background: #e3f2fd; color: #0d47a1; border: 1px solid #90caf9; }
   </style>
 </head>
 <body>
@@ -17,6 +21,8 @@
   <input id="token" type="text" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." style="width: 100%; max-width: 720px;" />
   <div style="height:12px"></div>
   <button id="start">연동 시작</button>
+
+  <div id="message" aria-live="polite"></div>
 
   <h3>로그</h3>
   <div id="log"></div>
@@ -29,10 +35,18 @@
       el.textContent += (msg + "\n");
     };
 
+    const showMessage = (msg, type = 'info') => {
+      const el = document.getElementById('message');
+      el.textContent = msg;
+      el.className = '';
+      el.classList.add(type);
+      el.style.display = 'block';
+    };
+
     document.getElementById('start').addEventListener('click', async () => {
       const token = document.getElementById('token').value.trim();
       if (!token) {
-        alert('JWT 토큰을 입력하세요.');
+        showMessage('JWT 토큰을 입력하세요.', 'error');
         return;
       }
       log("요청: POST /notion/connect");
@@ -59,10 +73,11 @@
         const data = await res.json();
         const authorizeUrl = data.authorize_url;
         log("authorize_url 받음 → 브라우저 네비게이션으로 이동");
-        alert(authorizeUrl)
+        showMessage('인증 페이지로 이동합니다.', 'info');
         window.location.href = authorizeUrl; // ← 이게 핵심 (CORS 우회)
       } catch (e) {
         log("네트워크 오류: " + (e && e.message ? e.message : e));
+        showMessage('네트워크 오류가 발생했습니다. 잠시 후 다시 시도해주세요.', 'error');
       }
     });
   </script>

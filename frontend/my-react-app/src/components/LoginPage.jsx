@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import styled, { css } from 'styled-components';
-import axios from 'axios';
+import apiClient, { storeTokens } from '../api/client';
 // 1. useNavigate, Link import
 import { useNavigate, Link } from 'react-router-dom';
 
@@ -38,13 +38,15 @@ const Title = styled.h2`
   font-weight: 700;
   color: #000;
   margin-bottom: 25px;
-  align-self: flex-start;
+  align-self: center;
+  text-align: center;
 `;
 
 const Form = styled.form`
   display: flex;
   flex-direction: column;
   width: 100%;
+  margin-bottom: 16px;
 `;
 
 const Label = styled.label`
@@ -99,32 +101,9 @@ const Button = styled.button`
     css`
       background-color: #6200EE;
       color: white;
-      
+
       &:hover {
         background-color: #5100C4;
-      }
-    `}
-
-  ${(props) =>
-    props.$social === 'kakao' &&
-    css`
-      background-color: #FEE500;
-      color: #3C1E1E;
-      
-      &:hover {
-        background-color: #F0D900;
-      }
-    `}
-
-  ${(props) =>
-    props.$social === 'google' &&
-    css`
-      background-color: #FFFFFF;
-      color: #444;
-      border: 1px solid #DADCE0;
-      
-      &:hover {
-        background-color: #F8F9FA;
       }
     `}
   
@@ -155,35 +134,11 @@ const SignUpLink = styled(Link)`
   font-size: 14px;
   color: #555;
   text-decoration: none;
-  margin-top: 8px;
-  
+  margin-top: 12px;
+  text-align: center;
+
   &:hover {
     text-decoration: underline;
-  }
-`;
-
-const Separator = styled.div`
-  display: flex;
-  align-items: center;
-  text-align: center;
-  color: #AAA;
-  width: 100%;
-  margin: 24px 0;
-  font-size: 13px;
-
-  &::before,
-  &::after {
-    content: '';
-    flex: 1;
-    border-bottom: 1px solid #E0E0E0;
-  }
-
-  &::before {
-    margin-right: 12px;
-  }
-
-  &::after {
-    margin-left: 12px;
   }
 `;
 
@@ -207,15 +162,14 @@ function LoginPage() {
     const apiUrl = '/api/users/login'; 
 
     try {
-      const response = await axios.post(apiUrl, { id, password });
+      const response = await apiClient.post(apiUrl, { id, password });
       
       // 3. 닉네임 받아오기
       const { access_token, refresh_token, nickname } = response.data;
       console.log('Login Success:', response.data);
 
-      // 4. 토큰을 localStorage에 저장
-      localStorage.setItem('accessToken', access_token);
-      localStorage.setItem('refreshToken', refresh_token);
+      // 4. 토큰을 세션 스토리지에 저장
+      storeTokens({ access_token, refresh_token });
       // 5. 닉네임 저장
       if (nickname) {
         localStorage.setItem('userNickname', nickname);
@@ -277,17 +231,6 @@ function LoginPage() {
         아직 계정이 없으신가요? 회원가입하러 가기
       </SignUpLink>
 
-      <Separator>또는</Separator>
-
-      <Button $social="kakao" disabled={loading}>
-        {/* 아이콘 영역 (추후 svg/img 태그) */}
-        카카오톡으로 3초만에 로그인
-      </Button>
-      
-      <Button $social="google" disabled={loading}>
-        {/* 아이콘 영역 (추후 svg/img 태그) */}
-        구글ID 로그인으로 회원가입
-      </Button>
     </Container>
   );
 }

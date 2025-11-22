@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import styled from 'styled-components';
-import axios from 'axios';
+import apiClient, { getAccessToken } from '../api/client';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 
 const Container = styled.div`
@@ -68,7 +68,7 @@ function GoogleOAuthCallback() {
 
     const verifyCallback = async () => {
       try {
-        const token = localStorage.getItem('accessToken');
+        const token = getAccessToken();
         if (!token) {
           setError('인증 정보가 만료되었습니다. 다시 로그인해주세요.');
           setLoading(false);
@@ -76,33 +76,18 @@ function GoogleOAuthCallback() {
           return;
         }
 
-        await axios.get('/api/google-drive/oauth/callback', {
+        await apiClient.get('/api/google-drive/oauth/callback', {
           params: { code, state },
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
         });
 
-        setLoadingMessage('Google Drive 데이터로 지식 베이스를 갱신하고 있습니다...');
-        let syncFailed = false;
-
-        try {
-          await axios.post('/api/google-drive/files/pull', {}, {
-            headers: {
-              'Authorization': `Bearer ${token}`,
-            },
-          });
-        } catch (syncError) {
-          console.error('Google Drive RAG 동기화 실패:', syncError);
-          syncFailed = true;
-        }
-
+        setLoadingMessage('Google Drive 연동이 완료되었습니다. 대시보드로 이동합니다...');
         setLoading(false);
 
         navigate('/dashboard', {
           state: {
             googleConnected: true,
-            googleSyncFailed: syncFailed,
+            googleSyncFailed: false,
+            triggerKnowledgeRefresh: true,
           },
         });
       } catch (err) {

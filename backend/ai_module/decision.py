@@ -1,13 +1,16 @@
 """LangGraph 라우팅을 위한 행동 판단 에이전트."""
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass
 from typing import Literal, Optional
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableSequence
 from langchain_openai import AzureChatOpenAI
-from pydantic import BaseModel, Field
+from openai import LengthFinishReasonError
+from pydantic import BaseModel, Field, ValidationError
 
 from .ai_config import _decision_load_chat_config
 
@@ -15,8 +18,10 @@ from .ai_config import _decision_load_chat_config
 class _DecisionSchema(BaseModel):
     """LLM으로부터 구조화된 결정을 수집하기 위한 스키마."""
 
-    action: Literal["search", "generate"] = Field(
-        description="사용자 요청이 검색(search)인지 문서 생성(generate)인지 분류한 결과",
+    action: Literal["search", "generate", "chat"] = Field(
+        description=(
+            "사용자 요청이 검색(search), 문서 생성(generate), 단순 대화(chat) 중 무엇인지 분류한 결과"
+        ),
     )
     use_rag: bool = Field(
         description="생성 작업 시 기존 RAG 문서를 참고해야 하면 true",
@@ -40,7 +45,7 @@ class _DecisionSchema(BaseModel):
 class AgentDecision:
     """라우팅 노드가 사용할 의사결정 결과."""
 
-    action: Literal["search", "generate"]
+    action: Literal["search", "generate", "chat"]
     use_rag: bool
     rationale: str
     title_hint: Optional[str]
@@ -57,13 +62,18 @@ class DecisionAgent:
                     "system",
                     (
                         "당신은 Arcana의 라우팅 어시스턴트입니다."
-                        " 사용자의 요청을 읽고 다음 중 한 가지 행동을 선택하세요.\n"
-                        "1. search: 사용자가 기존 문서의 위치, 존재 여부, 정보 확인을 원할 때\n"
-                        "2. generate: 사용자가 새로운 문서를 작성하거나 초안을 만들어 달라고 할 때\n"
-                        "생성 작업이 기존 RAG 문서 기반으로 이루어져야 한다면 use_rag를 true로 설정하세요."
-                        " 예: '지난 회의록을 참고해서 보고서 작성해줘'\n"
-                        " 사용자가 특정 ‘기존 문서’를 참조하라고 명시하지 않으면 use_rag는 기본적으로 false입니다.\n"
-                        "출력은 무조건 JSON으로만 답변하세요."
+                        " 사용자의 요청을 읽고 다음 중 한 가지 행동을 JSON으로 선택하세요.\n"
+                        "1. search: 기존 문서의 위치/내용/존재 여부를 찾아달라는 요청\n"
+                        "   - 과거에 만들거나 저장한 기록(회의록, 여행기, 구매 내역 등)이나 '내가 ~ 했었나?'처럼 기억을 확인하려는 질문은 반드시 search로 분류하세요.\n"
+                        "2. generate: 새 문서/파일을 작성하거나 초안을 만들어달라는 요청\n"
+                        "3. chat: 단순 안부/잡담/의견 등 워크스페이스 자료가 필요 없는 일반 대화\n"
+                        "생성 작업이 기존 문서를 반드시 참고해야 하면 use_rag=true로 설정합니다."
+                        " 예) '지난 회의록 바탕으로 보고서 작성' → generate + use_rag=true\n"
+                        "사용자가 '파일 생성', '문서 작성' 등을 명확히 요구하면 generate를 선택합니다."
+                        "chat을 선택할 때는 use_rag=false로 둡니다."
+                        "title_hint와 instructions는 생성 시에만 활용할 수 있는 간단한 힌트입니다."
+                        "출력은 action, use_rag, rationale, title_hint, instructions 필드를 포함한 JSON 한 개만 반환하세요."
+                        " rationale은 60자 이내로 간결하게 작성합니다."
                     ),
                 ),
                 (
@@ -72,6 +82,22 @@ class DecisionAgent:
                         "사용자 요청: {query}\n"
                         "추가 참고 정보: {extra_context}"
                     ),
+                ),
+            ]
+        )
+        self._tight_prompt = ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    (
+                        "당신은 Arcana의 라우팅 어시스턴트입니다. 아주 짧은 JSON 한 개만 반환하세요."
+                        " action, use_rag, rationale, title_hint, instructions 필드만 포함하고"
+                        " rationale은 60자 미만으로 제한합니다."
+                    ),
+                ),
+                (
+                    "human",
+                    "사용자 요청: {query}\n추가 참고 정보: {extra_context}",
                 ),
             ]
         )
@@ -88,10 +114,25 @@ class DecisionAgent:
                 azure_deployment=config["deployment"],
                 model=config["model"],
                 temperature=0.0,
-                max_tokens=1024,
+                top_p=0.0,
+                max_tokens=192,
                 max_retries=3,
             )
         return self._llm
+
+    def _build_llm(self, *, max_tokens: int) -> AzureChatOpenAI:
+        config = _decision_load_chat_config()
+        return AzureChatOpenAI(
+            azure_endpoint=config["endpoint"],
+            api_key=config["api_key"],
+            api_version=config["api_version"],
+            azure_deployment=config["deployment"],
+            model=config["model"],
+            temperature=0.0,
+            top_p=0.0,
+            max_tokens=max_tokens,
+            max_retries=2,
+        )
 
     def _ensure_chain(self) -> RunnableSequence:
         if self._chain is None:
@@ -99,11 +140,8 @@ class DecisionAgent:
             self._chain = self._prompt | llm
         return self._chain
 
-    async def decide(self, query: str, extra_context: str = "") -> AgentDecision:
-        """LLM을 호출해 행동 결정을 내린다."""
-
-        chain = self._ensure_chain()
-        decision: _DecisionSchema = await chain.ainvoke({"query": query, "extra_context": extra_context})
+    @staticmethod
+    def _to_agent_decision(decision: _DecisionSchema) -> AgentDecision:
         return AgentDecision(
             action=decision.action,
             use_rag=decision.use_rag,
@@ -111,4 +149,46 @@ class DecisionAgent:
             title_hint=decision.title_hint.strip() if decision.title_hint else None,
             instructions=decision.instructions.strip() if decision.instructions else None,
         )
+
+    async def decide(self, query: str, extra_context: str = "") -> AgentDecision:
+        """LLM을 호출해 행동 결정을 내린다."""
+
+        payload = {"query": query, "extra_context": extra_context}
+        chain = self._ensure_chain()
+
+        try:
+            decision: _DecisionSchema = await chain.ainvoke(payload)
+            return self._to_agent_decision(decision)
+        except (LengthFinishReasonError, ValidationError, json.JSONDecodeError, Exception):
+            pass
+
+        tight_llm = self._build_llm(max_tokens=128)
+        tight_chain = self._tight_prompt | tight_llm.with_structured_output(_DecisionSchema)
+        try:
+            decision = await tight_chain.ainvoke(payload)
+            return self._to_agent_decision(decision)
+        except Exception:
+            try:
+                raw_text: str = await (self._tight_prompt | tight_llm).ainvoke(payload)
+                extracted = _safe_extract_json(raw_text)
+                validated = _DecisionSchema.model_validate(extracted)
+                return self._to_agent_decision(validated)
+            except Exception:
+                fallback = _DecisionSchema(
+                    action="search",
+                    use_rag=True,
+                    rationale="fallback-default",
+                    title_hint=None,
+                    instructions=None,
+                )
+                return self._to_agent_decision(fallback)
+
+
+def _safe_extract_json(text: str) -> dict:
+    """느슨한 문자열에서 JSON 객체 블록만 추출한다."""
+
+    match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+    if not match:
+        raise ValueError("No JSON object found in text")
+    return json.loads(match.group(0))
 
