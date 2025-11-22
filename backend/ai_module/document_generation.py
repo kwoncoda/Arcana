@@ -9,7 +9,7 @@ from langchain_core.runnables import RunnableSequence
 from langchain_openai import AzureChatOpenAI
 from pydantic import BaseModel, Field
 
-from .ai_config import _decision_load_chat_config
+from .ai_config import _create_file_load_chat_config
 
 
 class _GeneratedDocumentSchema(BaseModel):
@@ -68,7 +68,7 @@ class DocumentGenerationAgent:
 
     def _ensure_llm(self) -> AzureChatOpenAI:
         if self._llm is None:
-            config = _decision_load_chat_config()
+            config = _create_file_load_chat_config()
             self._llm = AzureChatOpenAI(
                 azure_endpoint=config["endpoint"],
                 api_key=config["api_key"],
