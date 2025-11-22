@@ -70,6 +70,10 @@ apiClient.interceptors.response.use(
       return Promise.reject(error);
     }
 
+    if (config.url?.includes('/users/login') || config.url?.includes('/users/register')) {
+      return Promise.reject(error);
+    }
+
     const detail = response.data?.detail;
 
     if (config.url?.includes('/token/refresh') || isHardFailure(detail)) {
