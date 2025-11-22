@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import styled, { css } from 'styled-components';
 import { useNavigate, Link } from 'react-router-dom';
-import { clearTokens } from '../api/client';
+import apiClient, { clearTokens } from '../api/client';
 
 // --- Styled Components (로그인 페이지와 유사) ---
 
@@ -134,6 +134,7 @@ const BackLink = styled(Link)`
 function MyPage() {
   const [nickname, setNickname] = useState('사용자');
   const [error, setError] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const navigate = useNavigate();
 
   // 페이지 로드 시 닉네임 불러오기
@@ -145,16 +146,37 @@ function MyPage() {
   }, []);
 
   // 로그아웃 핸들러
-  const handleLogout = () => {
+  const clearProfileState = () => {
     clearTokens();
-    localStorage.removeItem('userNickname');
+    window.sessionStorage?.removeItem('userNickname');
+    window.localStorage?.removeItem('userNickname');
+  };
+
+  // 로그아웃 핸들러
+  const handleLogout = () => {
+    clearProfileState();
     navigate('/login');
   };
 
-  // 회원탈퇴 핸들러 (UI 전용)
-  const handleDeleteAccount = () => {
-    setError('회원 탈퇴 기능은 아직 구현되지 않았습니다.');
-    // 
+  // 회원탈퇴 핸들러
+  const handleDeleteAccount = async () => {
+    setError(null);
+    if (isDeleting) return;
+
+    const confirmed = window.confirm('정말로 회원을 탈퇴하시겠습니까? 연결된 데이터도 비활성화됩니다.');
+    if (!confirmed) return;
+
+    try {
+      setIsDeleting(true);
+      await apiClient.delete('/api/users/me');
+      clearProfileState();
+      navigate('/login', { replace: true });
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      setError(detail || '회원 탈퇴 처리 중 오류가 발생했습니다. 다시 시도해주세요.');
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   return (
@@ -177,7 +199,7 @@ function MyPage() {
           로그아웃
         </Button>
 
-        <Button $destructive onClick={handleDeleteAccount}>
+        <Button $destructive onClick={handleDeleteAccount} disabled={isDeleting}>
           회원 탈퇴
         </Button>
         

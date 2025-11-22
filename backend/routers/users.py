@@ -4,10 +4,11 @@ import base64
 import hashlib
 import hmac
 import os
+import shutil
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status, Response
-from sqlalchemy import select, exists
+from sqlalchemy import select, exists, delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -26,6 +27,10 @@ from models import (
     Organization,
     RagIndex,
     DataSource,
+    NotionOauthCredentials,
+    GoogleDriveOauthCredentials,
+    GoogleDriveFileSnapshot,
+    GoogleDriveSyncState,
     Workspace,
     WorkspaceType,
     User,
@@ -37,8 +42,8 @@ from utils.auth import (
     create_refresh_token,
     decode_refresh_token,
 )
-from utils.db import Base, get_db
-from utils.workspace_storage import ensure_workspace_storage
+from utils.db import get_db
+from utils.workspace_storage import ensure_workspace_storage, workspace_storage_path
 from utils.workspace import resolve_user_primary_workspace, WorkspaceResolutionError
 
 
@@ -398,3 +403,114 @@ def list_external_tool_connections(
     ]
 
     return ExternalToolConnectionsResponse(connections=connections)
+
+
+@router.delete(
+    "/me",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        204: {"description": "회원 탈퇴 완료"},
+        401: {"description": "인증 실패"},
+        500: {"description": "회원 탈퇴 처리 중 오류"},
+    },
+)
+def delete_me(
+    *,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Response:
+    """현재 로그인한 사용자를 유형에 맞춰 정리 후 삭제한다."""
+
+    workspace_storage_dir = None
+
+    try:
+        with db.begin():
+            user_type = WorkspaceType(user.type)
+
+            if user_type is WorkspaceType.personal:
+                personal_workspace = db.scalar(
+                    select(Workspace).where(
+                        Workspace.owner_user_idx == user.idx,
+                        Workspace.type == WorkspaceType.personal.value,
+                    )
+                )
+
+                if personal_workspace:
+                    workspace_storage_dir = workspace_storage_path(personal_workspace.name)
+
+                    data_source_ids = db.scalars(
+                        select(DataSource.idx).where(
+                            DataSource.workspace_idx == personal_workspace.idx
+                        )
+                    ).all()
+
+                    if data_source_ids:
+                        db.execute(
+                            delete(GoogleDriveFileSnapshot).where(
+                                GoogleDriveFileSnapshot.data_source_idx.in_(data_source_ids)
+                            )
+                        )
+                        db.execute(
+                            delete(GoogleDriveSyncState).where(
+                                GoogleDriveSyncState.data_source_idx.in_(data_source_ids)
+                            )
+                        )
+                        db.execute(
+                            delete(GoogleDriveOauthCredentials).where(
+                                GoogleDriveOauthCredentials.data_source_idx.in_(data_source_ids)
+                            )
+                        )
+                        db.execute(
+                            delete(NotionOauthCredentials).where(
+                                NotionOauthCredentials.data_source_idx.in_(data_source_ids)
+                            )
+                        )
+
+                    db.execute(
+                        delete(RagIndex).where(
+                            RagIndex.workspace_idx == personal_workspace.idx
+                        )
+                    )
+                    db.execute(
+                        delete(DataSource).where(
+                            DataSource.workspace_idx == personal_workspace.idx
+                        )
+                    )
+                    db.execute(
+                        delete(Workspace).where(Workspace.idx == personal_workspace.idx)
+                    )
+
+            if user_type is WorkspaceType.organization:
+                organization_ids = db.scalars(
+                    select(Membership.organization_idx).where(
+                        Membership.user_idx == user.idx
+                    )
+                ).all()
+
+                db.execute(
+                    delete(NotionOauthCredentials).where(
+                        NotionOauthCredentials.user_idx == user.idx
+                    )
+                )
+                db.execute(
+                    delete(GoogleDriveOauthCredentials).where(
+                        GoogleDriveOauthCredentials.user_idx == user.idx
+                    )
+                )
+                db.execute(
+                    delete(Membership).where(Membership.user_idx == user.idx)
+                )
+
+            db.execute(delete(User).where(User.idx == user.idx))
+
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="회원 탈퇴 처리 중 오류가 발생했습니다.",
+        )
+
+    if workspace_storage_dir and workspace_storage_dir.exists():
+        shutil.rmtree(workspace_storage_dir, ignore_errors=True)
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
