@@ -426,7 +426,7 @@ def delete_me(
     try:
         user_type = WorkspaceType(user.type)
 
-        with db.begin():
+        with db.begin_nested():
             if user_type is WorkspaceType.personal:
                 personal_workspace = db.scalar(
                     select(Workspace).where(
@@ -497,7 +497,10 @@ def delete_me(
 
             db.execute(delete(User).where(User.idx == user.idx))
 
+        db.commit()
+
     except Exception:
+        db.rollback()
         logger.exception("Failed to delete user %s", user.idx)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
