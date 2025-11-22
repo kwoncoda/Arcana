@@ -138,6 +138,7 @@ const SyncingSpinner = styled.div`
   border: 3px solid #e2e8f0;
   border-top-color: #4a5568;
   border-radius: 50%;
+  aspect-ratio: 1 / 1;
   animation: ${spin} 0.9s linear infinite;
 `;
 
@@ -167,21 +168,21 @@ const ChatOverlayActions = styled.div`
 const ChatOverlayButton = styled.button`
   margin-top: 8px;
   padding: 10px 16px;
-  background-color: #EBF8FF;
-  color: #2B6CB0;
-  border: 1px solid #BEE3F8;
+  background-color: #F56565;
+  color: #fff;
+  border: 1px solid #E53E3E;
   border-radius: 8px;
   font-weight: 600;
   cursor: pointer;
   transition: background-color 0.2s ease, color 0.2s ease;
 
   &:hover {
-    background-color: #DBEAFE;
-    color: #1A365D;
+    background-color: #E53E3E;
+    color: #fff;
   }
 
   &:active {
-    background-color: #BFDBFE;
+    background-color: #C53030;
   }
 `;
 
@@ -1458,11 +1459,11 @@ function MainDashboard() {
           <SyncingSpinner />
           <SyncingTextGroup>
             <strong>답변 중입니다</strong>
-            <span>백엔드에서 연산을 처리하고 있습니다. 잠시만 기다려주세요.</span>
+            <span>잠시만 기다려주세요.</span>
           </SyncingTextGroup>
           <ChatOverlayActions>
             <ChatOverlayButton type="button" onClick={handleStopMessage}>
-              중단하기
+              중지
             </ChatOverlayButton>
           </ChatOverlayActions>
         </ChatLoadingCard>
