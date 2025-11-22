@@ -353,7 +353,7 @@ class WorkspaceRAGSearchAgent:
                 )
             return SearchResult(
                 question=query,
-                answer="관련 문서를 찾을 수 없습니다.",
+                answer="관련 문서를 찾을 수 없습니다. 지식 베이스를 갱신해주세요.",
                 citations=[],
             )
 

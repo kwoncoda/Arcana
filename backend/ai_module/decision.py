@@ -15,8 +15,10 @@ from .ai_config import _decision_load_chat_config
 class _DecisionSchema(BaseModel):
     """LLM으로부터 구조화된 결정을 수집하기 위한 스키마."""
 
-    action: Literal["search", "generate"] = Field(
-        description="사용자 요청이 검색(search)인지 문서 생성(generate)인지 분류한 결과",
+    action: Literal["search", "generate", "chat"] = Field(
+        description=(
+            "사용자 요청이 검색(search), 문서 생성(generate), 단순 대화(chat) 중 무엇인지 분류한 결과"
+        ),
     )
     use_rag: bool = Field(
         description="생성 작업 시 기존 RAG 문서를 참고해야 하면 true",
@@ -40,7 +42,7 @@ class _DecisionSchema(BaseModel):
 class AgentDecision:
     """라우팅 노드가 사용할 의사결정 결과."""
 
-    action: Literal["search", "generate"]
+    action: Literal["search", "generate", "chat"]
     use_rag: bool
     rationale: str
     title_hint: Optional[str]
@@ -57,13 +59,16 @@ class DecisionAgent:
                     "system",
                     (
                         "당신은 Arcana의 라우팅 어시스턴트입니다."
-                        " 사용자의 요청을 읽고 다음 중 한 가지 행동을 선택하세요.\n"
-                        "1. search: 사용자가 기존 문서의 위치, 존재 여부, 정보 확인을 원할 때\n"
-                        "2. generate: 사용자가 새로운 문서를 작성하거나 초안을 만들어 달라고 할 때\n"
-                        "생성 작업이 기존 RAG 문서 기반으로 이루어져야 한다면 use_rag를 true로 설정하세요."
-                        " 예: '지난 회의록을 참고해서 보고서 작성해줘'\n"
-                        " 사용자가 특정 ‘기존 문서’를 참조하라고 명시하지 않으면 use_rag는 기본적으로 false입니다.\n"
-                        "출력은 무조건 JSON으로만 답변하세요."
+                        " 사용자의 요청을 읽고 다음 중 한 가지 행동을 JSON으로 선택하세요.\n"
+                        "1. search: 기존 문서의 위치/내용/존재 여부를 찾아달라는 요청\n"
+                        "2. generate: 새 문서/파일을 작성하거나 초안을 만들어달라는 요청\n"
+                        "3. chat: 단순 안부/잡담/의견 등 워크스페이스 자료가 필요 없는 일반 대화\n"
+                        "생성 작업이 기존 문서를 반드시 참고해야 하면 use_rag=true로 설정합니다."
+                        " 예) '지난 회의록 바탕으로 보고서 작성' → generate + use_rag=true\n"
+                        "사용자가 '파일 생성', '문서 작성' 등을 명확히 요구하면 generate를 선택합니다."
+                        "chat을 선택할 때는 use_rag=false로 둡니다."
+                        "title_hint와 instructions는 생성 시에만 활용할 수 있는 간단한 힌트입니다."
+                        "출력은 action, use_rag, rationale, title_hint, instructions 필드를 포함한 JSON 한 개만 반환하세요."
                     ),
                 ),
                 (

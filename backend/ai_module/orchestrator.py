@@ -17,6 +17,7 @@ from notions.notionAuth import (
 from notions.notionCreate import NotionPageReference, create_page_from_markdown
 
 from .decision import AgentDecision, DecisionAgent
+from .chat import ChatAgent
 from .document_generation import DocumentGenerationAgent, GeneratedDocument
 from .final_answer import FinalAnswerAgent
 from .rag_search import (
@@ -39,7 +40,7 @@ class AgentState(TypedDict, total=False):
     retrieval: RetrievalPayload
     generated_document: GeneratedDocument
     result: SearchResult
-    mode: Literal["search", "generate"]
+    mode: Literal["search", "generate", "chat"]
     notion_page: NotionPageReference
     final_message_instructions: Optional[str]
 
@@ -48,7 +49,7 @@ class AgentState(TypedDict, total=False):
 class AgentExecutionResult:
     """그래프 실행이 끝난 뒤 API 계층에 전달할 결과."""
 
-    mode: Literal["search", "generate"]
+    mode: Literal["search", "generate", "chat"]
     result: SearchResult
     notion_page_id: Optional[str] = None
     notion_page_url: Optional[str] = None
@@ -66,11 +67,13 @@ class WorkspaceAgentOrchestrator:
         decision_agent: Optional[DecisionAgent] = None,
         generation_agent: Optional[DocumentGenerationAgent] = None,
         final_answer_agent: Optional[FinalAnswerAgent] = None,
+        chat_agent: Optional[ChatAgent] = None,
     ) -> None:
         self._search_agent = search_agent or WorkspaceRAGSearchAgent()
         self._decision_agent = decision_agent or DecisionAgent()
         self._generation_agent = generation_agent or DocumentGenerationAgent()
         self._final_answer_agent = final_answer_agent or FinalAnswerAgent()
+        self._chat_agent = chat_agent or ChatAgent()
         self._graph = self._build_graph()
 
     def _build_graph(self):
@@ -80,6 +83,7 @@ class WorkspaceAgentOrchestrator:
         graph.add_node("prepare_rag", self._node_prepare_rag)
         graph.add_node("generate", self._node_generate)
         graph.add_node("create_page", self._node_create_page)
+        graph.add_node("chat", self._node_chat)
         graph.add_node("final_answer", self._node_finalize)
 
         graph.set_entry_point("decide")
@@ -90,6 +94,7 @@ class WorkspaceAgentOrchestrator:
                 "search": "search",
                 "generate_with_rag": "prepare_rag",
                 "generate_without_rag": "generate",
+                "chat": "chat",
                 "end": END,
             },
         )
@@ -97,6 +102,7 @@ class WorkspaceAgentOrchestrator:
         graph.add_edge("generate", "create_page")
         graph.add_edge("search", "final_answer")
         graph.add_edge("create_page", "final_answer")
+        graph.add_edge("chat", "final_answer")
         graph.add_edge("final_answer", END)
 
         return graph.compile()
@@ -136,6 +142,15 @@ class WorkspaceAgentOrchestrator:
         )
         return {"generated_document": generated, "mode": "generate"}
 
+    async def _node_chat(self, state: AgentState) -> AgentState:
+        answer = await self._chat_agent.respond(state["query"])
+        result = SearchResult(
+            question=state["query"],
+            answer=answer,
+            citations=[],
+        )
+        return {"result": result, "mode": "chat"}
+
     async def _node_create_page(self, state: AgentState) -> AgentState:
         generated = state.get("generated_document")
         if not generated:
@@ -166,6 +181,10 @@ class WorkspaceAgentOrchestrator:
         ]
         if generated.summary:
             lines.append(f"요약: {generated.summary}")
+        if citations:
+            lines.append(f"생성 근거: 워크스페이스 문서 {len(citations)}개를 참고했습니다.")
+        else:
+            lines.append("생성 근거: 제공된 요청만으로 새로 작성했습니다.")
         if page_ref.url:
             lines.append(page_ref.url)
         else:
@@ -187,7 +206,25 @@ class WorkspaceAgentOrchestrator:
             raise RuntimeError("최종 답변이 준비되지 않았습니다.")
 
         mode = state.get("mode", "search")
-        instructions = state.get("final_message_instructions")
+        base_instruction = state.get("final_message_instructions") or ""
+        extras: list[str] = []
+        if mode == "search":
+            extras.append(
+                "검색 결과에 포함된 링크와 핵심 문구는 그대로 유지하고, 불확실하면 모른다고 답하세요."
+            )
+            if not result.citations:
+                extras.append(
+                    "관련 문서를 찾지 못했다면 해당 안내 문구를 명확히 전달하세요."
+                )
+        if mode == "generate":
+            extras.append(
+                "생성된 문서의 제목/요약/URL이 초안에 있다면 그대로 전달하고, 어떤 내용을 토대로 만들었는지 한 줄로 요약하세요."
+            )
+        if mode == "chat":
+            extras.append(
+                "친근하고 짧은 대화체로 답하고, 워크스페이스 문서나 링크는 언급하지 마세요."
+            )
+        instructions = " ".join([base_instruction, *extras]).strip()
         refined_answer = await self._final_answer_agent.craft_final_answer(
             answer_draft=result.answer,
             question=result.question,
@@ -211,6 +248,8 @@ class WorkspaceAgentOrchestrator:
             return "search"
         if decision.action == "generate":
             return "generate_with_rag" if decision.use_rag else "generate_without_rag"
+        if decision.action == "chat":
+            return "chat"
         return "search"
 
     async def run(
