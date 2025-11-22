@@ -426,80 +426,79 @@ def delete_me(
     try:
         user_type = WorkspaceType(user.type)
 
-        if user_type is WorkspaceType.personal:
-            personal_workspace = db.scalar(
-                select(Workspace).where(
-                    Workspace.owner_user_idx == user.idx,
-                    Workspace.type == WorkspaceType.personal.value,
+        with db.begin():
+            if user_type is WorkspaceType.personal:
+                personal_workspace = db.scalar(
+                    select(Workspace).where(
+                        Workspace.owner_user_idx == user.idx,
+                        Workspace.type == WorkspaceType.personal.value,
+                    )
                 )
-            )
 
-            if personal_workspace:
-                workspace_storage_dir = workspace_storage_path(personal_workspace.name)
+                if personal_workspace:
+                    workspace_storage_dir = workspace_storage_path(personal_workspace.name)
 
-                data_source_ids = db.scalars(
-                    select(DataSource.idx).where(
-                        DataSource.workspace_idx == personal_workspace.idx
-                    )
-                ).all()
+                    data_source_ids = db.scalars(
+                        select(DataSource.idx).where(
+                            DataSource.workspace_idx == personal_workspace.idx
+                        )
+                    ).all()
 
-                if data_source_ids:
+                    if data_source_ids:
+                        db.execute(
+                            delete(GoogleDriveFileSnapshot).where(
+                                GoogleDriveFileSnapshot.data_source_idx.in_(data_source_ids)
+                            )
+                        )
+                        db.execute(
+                            delete(GoogleDriveSyncState).where(
+                                GoogleDriveSyncState.data_source_idx.in_(data_source_ids)
+                            )
+                        )
+                        db.execute(
+                            delete(GoogleDriveOauthCredentials).where(
+                                GoogleDriveOauthCredentials.data_source_idx.in_(data_source_ids)
+                            )
+                        )
+                        db.execute(
+                            delete(NotionOauthCredentials).where(
+                                NotionOauthCredentials.data_source_idx.in_(data_source_ids)
+                            )
+                        )
+
                     db.execute(
-                        delete(GoogleDriveFileSnapshot).where(
-                            GoogleDriveFileSnapshot.data_source_idx.in_(data_source_ids)
+                        delete(RagIndex).where(
+                            RagIndex.workspace_idx == personal_workspace.idx
                         )
                     )
                     db.execute(
-                        delete(GoogleDriveSyncState).where(
-                            GoogleDriveSyncState.data_source_idx.in_(data_source_ids)
+                        delete(DataSource).where(
+                            DataSource.workspace_idx == personal_workspace.idx
                         )
                     )
                     db.execute(
-                        delete(GoogleDriveOauthCredentials).where(
-                            GoogleDriveOauthCredentials.data_source_idx.in_(data_source_ids)
-                        )
-                    )
-                    db.execute(
-                        delete(NotionOauthCredentials).where(
-                            NotionOauthCredentials.data_source_idx.in_(data_source_ids)
-                        )
+                        delete(Workspace).where(Workspace.idx == personal_workspace.idx)
                     )
 
+            if user_type is WorkspaceType.organization:
                 db.execute(
-                    delete(RagIndex).where(
-                        RagIndex.workspace_idx == personal_workspace.idx
+                    delete(NotionOauthCredentials).where(
+                        NotionOauthCredentials.user_idx == user.idx
                     )
                 )
                 db.execute(
-                    delete(DataSource).where(
-                        DataSource.workspace_idx == personal_workspace.idx
+                    delete(GoogleDriveOauthCredentials).where(
+                        GoogleDriveOauthCredentials.user_idx == user.idx
                     )
                 )
                 db.execute(
-                    delete(Workspace).where(Workspace.idx == personal_workspace.idx)
+                    delete(Membership).where(Membership.user_idx == user.idx)
                 )
 
-        if user_type is WorkspaceType.organization:
-            db.execute(
-                delete(NotionOauthCredentials).where(
-                    NotionOauthCredentials.user_idx == user.idx
-                )
-            )
-            db.execute(
-                delete(GoogleDriveOauthCredentials).where(
-                    GoogleDriveOauthCredentials.user_idx == user.idx
-                )
-            )
-            db.execute(
-                delete(Membership).where(Membership.user_idx == user.idx)
-            )
-
-        db.execute(delete(User).where(User.idx == user.idx))
-        db.commit()
+            db.execute(delete(User).where(User.idx == user.idx))
 
     except Exception:
         logger.exception("Failed to delete user %s", user.idx)
-        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="회원 탈퇴 처리 중 오류가 발생했습니다.",

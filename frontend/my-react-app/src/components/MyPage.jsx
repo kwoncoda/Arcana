@@ -129,11 +129,24 @@ const BackLink = styled(Link)`
   }
 `;
 
+const StatusMessage = styled.p`
+  font-size: 14px;
+  color: #1B5E20;
+  background-color: #E8F5E9;
+  border: 1px solid #A5D6A7;
+  border-radius: 8px;
+  padding: 12px;
+  width: 100%;
+  text-align: center;
+  margin-top: 16px;
+`;
+
 // --- React Component ---
 
 function MyPage() {
   const [nickname, setNickname] = useState('사용자');
   const [error, setError] = useState(null);
+  const [status, setStatus] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const navigate = useNavigate();
 
@@ -161,6 +174,7 @@ function MyPage() {
   // 회원탈퇴 핸들러
   const handleDeleteAccount = async () => {
     setError(null);
+    setStatus(null);
     if (isDeleting) return;
 
     const confirmed = window.confirm('정말로 회원을 탈퇴하시겠습니까? 연결된 데이터도 비활성화됩니다.');
@@ -170,7 +184,8 @@ function MyPage() {
       setIsDeleting(true);
       await apiClient.delete('/api/users/me');
       clearProfileState();
-      navigate('/login', { replace: true });
+      setStatus('탈퇴되었습니다. 로그인 화면으로 이동합니다.');
+      setTimeout(() => navigate('/login', { replace: true }), 1200);
     } catch (err) {
       const detail = err?.response?.data?.detail;
       setError(detail || '회원 탈퇴 처리 중 오류가 발생했습니다. 다시 시도해주세요.');
@@ -202,7 +217,8 @@ function MyPage() {
         <Button $destructive onClick={handleDeleteAccount} disabled={isDeleting}>
           회원 탈퇴
         </Button>
-        
+
+        {status && <StatusMessage>{status}</StatusMessage>}
         {error && <ErrorMessage>{error}</ErrorMessage>}
       </ContentBox>
 
