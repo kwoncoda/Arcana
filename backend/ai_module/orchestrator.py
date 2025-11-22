@@ -236,6 +236,8 @@ class WorkspaceAgentOrchestrator:
             mode=mode,
             custom_instructions=instructions,
         )
+        if not refined_answer:
+            refined_answer = answer_draft
         refined_result = SearchResult(
             question=result.question,
             answer=refined_answer,
