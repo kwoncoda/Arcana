@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import styled, { keyframes } from 'styled-components';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
 import apiClient, { clearTokens, getAccessToken } from '../api/client';
-import { 
+import {
   Home, 
   MessageSquare, 
   Database, 
@@ -24,6 +24,37 @@ import {
   Menu, // [추가] 햄버거 아이콘
   X     // [추가] 닫기 아이콘
 } from 'lucide-react';
+
+const CHAT_STORAGE_KEY = 'dashboardChatState';
+const CHAT_STATE_EVENT = 'dashboardChatStateUpdated';
+
+const readChatState = () => {
+  try {
+    const raw = localStorage.getItem(CHAT_STORAGE_KEY);
+    if (!raw) return { messages: [], isChatLoading: false, pendingQuery: '' };
+    const parsed = JSON.parse(raw);
+    return {
+      messages: parsed.messages || [],
+      isChatLoading: Boolean(parsed.isChatLoading),
+      pendingQuery: parsed.pendingQuery || '',
+    };
+  } catch (error) {
+    console.error('Failed to parse chat storage state:', error);
+    return { messages: [], isChatLoading: false, pendingQuery: '' };
+  }
+};
+
+const writeChatState = (state) => {
+  localStorage.setItem(
+    CHAT_STORAGE_KEY,
+    JSON.stringify({
+      messages: state.messages || [],
+      isChatLoading: Boolean(state.isChatLoading),
+      pendingQuery: state.pendingQuery || '',
+    })
+  );
+  window.dispatchEvent(new Event(CHAT_STATE_EVENT));
+};
 
 // --- 스트리밍 효과를 위한 커스텀 훅 ---
 function useInterval(callback, delay) {
@@ -641,6 +672,12 @@ const LoadingDots = styled.div`
   & > div:nth-child(3) { animation-delay: 0s; }
 `;
 
+const LoadingHint = styled.div`
+  font-size: 12px;
+  color: #A0AEC0;
+  padding: 0 16px 12px 16px;
+`;
+
 
 const WelcomeMessage = styled.div`
   background-color: #F7F7F9;
@@ -921,11 +958,13 @@ function MainDashboard() {
 
   const [chatMessages, setChatMessages] = useState([]);
   const [isChatLoading, setIsChatLoading] = useState(false);
+  const [pendingQuery, setPendingQuery] = useState('');
   const [isAutoScrollEnabled, setIsAutoScrollEnabled] = useState(true);
   const chatContainerRef = useRef(null);
   const textareaRef = useRef(null);
   const chatRequestControllerRef = useRef(null);
-  
+  const isMountedRef = useRef(true);
+
   // [추가] 모바일 사이드바 상태
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
@@ -940,6 +979,24 @@ function MainDashboard() {
       scrollToBottom();
     }
   }, [isAutoScrollEnabled, scrollToBottom]);
+
+  const applyStoredChatState = useCallback((state) => {
+    if (!state) return;
+    if (isMountedRef.current) {
+      setChatMessages(state.messages || []);
+      setIsChatLoading(Boolean(state.isChatLoading));
+      setPendingQuery(state.pendingQuery || '');
+    }
+  }, []);
+
+  const persistChatState = useCallback((messages, loading, pending = '') => {
+    writeChatState({ messages, isChatLoading: loading, pendingQuery: pending });
+    if (isMountedRef.current) {
+      setChatMessages(messages);
+      setIsChatLoading(loading);
+      setPendingQuery(pending);
+    }
+  }, []);
 
   const fetchConnections = useCallback(async (tokenOverride) => {
     setLoadingConnections(true);
@@ -968,6 +1025,23 @@ function MainDashboard() {
       setLoadingConnections(false);
     }
   }, [navigate]);
+
+  useEffect(() => {
+    const storedState = readChatState();
+    applyStoredChatState(storedState);
+
+    const handleChatStateUpdated = () => {
+      const latest = readChatState();
+      applyStoredChatState(latest);
+    };
+
+    window.addEventListener(CHAT_STATE_EVENT, handleChatStateUpdated);
+
+    return () => {
+      isMountedRef.current = false;
+      window.removeEventListener(CHAT_STATE_EVENT, handleChatStateUpdated);
+    };
+  }, [applyStoredChatState]);
 
   useEffect(() => {
     const nickname = localStorage.getItem('userNickname');
@@ -1201,7 +1275,9 @@ function MainDashboard() {
       return;
     }
 
-    setChatMessages((prev) => [...prev, { role: 'user', content: query }]);
+    const userMessage = { role: 'user', content: query };
+    const pendingMessages = [...chatMessages, userMessage];
+    persistChatState(pendingMessages, true, query);
 
     try {
       const res = await apiClient.post(
@@ -1211,20 +1287,21 @@ function MainDashboard() {
           signal: controller.signal,
         }
       );
-      
+
       const { answer, notion_page_url, notion_page_id } = res.data;
 
-      setChatMessages((prev) => [
-        ...prev,
-        {
-          role: 'ai',
-          content: answer,
-          sourcePage: notion_page_url,
-          sourceId: notion_page_id,
-        },
-      ]);
+      const aiMessage = {
+        role: 'ai',
+        content: answer,
+        sourcePage: notion_page_url,
+        sourceId: notion_page_id,
+      };
+
+      const completedMessages = [...pendingMessages, aiMessage];
+      persistChatState(completedMessages, false, '');
     } catch (err) {
       if (err.code === 'ERR_CANCELED') {
+        persistChatState(pendingMessages, false, '');
         return;
       }
       console.error('AI Search Error:', err);
@@ -1233,6 +1310,7 @@ function MainDashboard() {
         if (err.response.status === 401) {
           clearTokens();
           localStorage.removeItem('userNickname');
+          persistChatState(pendingMessages, false, '');
           navigate('/login');
           return;
         }
@@ -1240,12 +1318,12 @@ function MainDashboard() {
           errorMessage = `오류: ${err.response.data.detail}`;
         }
       }
-      setChatMessages((prev) => [
-        ...prev,
+      const errorMessages = [
+        ...pendingMessages,
         { role: 'ai', content: errorMessage, isError: true },
-      ]);
+      ];
+      persistChatState(errorMessages, false, '');
     } finally {
-      setIsChatLoading(false);
       chatRequestControllerRef.current = null;
     }
   };
@@ -1308,7 +1386,7 @@ function MainDashboard() {
       chatRequestControllerRef.current.abort();
       chatRequestControllerRef.current = null;
     }
-    setIsChatLoading(false);
+    persistChatState(chatMessages, false, '');
   };
 
   const handleKeyDown = (e) => {
@@ -1561,6 +1639,11 @@ function MainDashboard() {
                     <div />
                     <div />
                   </LoadingDots>
+                  {pendingQuery && (
+                    <LoadingHint>
+                      "{pendingQuery}" 질문을 처리하고 있어요.
+                    </LoadingHint>
+                  )}
                 </MessageWrapper>
               )}
             </ChatContainer>
