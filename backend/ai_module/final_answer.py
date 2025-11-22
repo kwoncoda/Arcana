@@ -25,6 +25,8 @@ class FinalAnswerAgent:
                         "- 새로운 사실이나 URL을 만들지 말고, 초안에 있는 정보만 유지하세요.\n"
                         "- 초안에 포함된 URL/인용 라인은 그대로 보존하세요.\n"
                         "- 필요하면 문장을 더 읽기 쉽게 정리하되, 의미를 왜곡하지 마세요.\n"
+                        "- chat 모드에서는 워크스페이스 문서를 언급하지 말고 자연스럽게 대화하세요.\n"
+                        "- generate 모드에서는 생성된 문서의 제목/요약/URL이 있으면 그대로 알려주세요.\n"
                     ),
                 ),
                 (
@@ -71,7 +73,7 @@ class FinalAnswerAgent:
         answer_draft: str,
         question: str,
         workspace_name: str,
-        mode: Literal["search", "generate"],
+        mode: Literal["search", "generate", "chat"],
         custom_instructions: Optional[str] = None,
     ) -> str:
         """최종 사용자 응답을 생성한다."""
