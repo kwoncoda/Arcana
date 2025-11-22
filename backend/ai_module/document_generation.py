@@ -1,11 +1,13 @@
 """LLM을 이용해 노션 문서 초안을 생성하는 모듈."""
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableSequence
+from openai import LengthFinishReasonError
 from langchain_openai import AzureChatOpenAI
 from pydantic import BaseModel, Field
 
@@ -50,6 +52,7 @@ class DocumentGenerationAgent:
                         "- summary는 핵심을 2~3문장으로 정리하고 400자 이내로 작성합니다.\n"
                         "- content는 한국어 마크다운 형식을 사용하며, 섹션마다 Heading을 배치합니다."
                         " 필요 시 리스트와 테이블도 마크다운으로 작성하세요.\n"
+                        "- content는 최대 1,500~2,000자 내에서 핵심만 작성합니다. 길면 표/리스트로 요약합니다.\n"
                     ),
                 ),
                 (
@@ -63,22 +66,43 @@ class DocumentGenerationAgent:
                 ),
             ]
         )
+        self._client_kwargs: Optional[Dict[str, Any]] = None
         self._llm: Optional[AzureChatOpenAI] = None
         self._chain: Optional[RunnableSequence] = None
 
+    def _build_llm(self, *, max_tokens: int) -> AzureChatOpenAI:
+        if self._client_kwargs is None:
+            config = _create_file_load_chat_config()
+            self._client_kwargs = {
+                "azure_endpoint": config["endpoint"],
+                "api_key": config["api_key"],
+                "api_version": config["api_version"],
+                "azure_deployment": config["deployment"],
+                "model": config["model"],
+                "temperature": 0.2,
+                "max_retries": 3,
+            }
+        return AzureChatOpenAI(**self._client_kwargs, max_tokens=max_tokens)
+
+    def _load_max_tokens(self) -> int:
+        raw = os.getenv("DOCGEN_MAX_TOKENS", "3200")
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            return 3200
+        return max(1200, min(value, 6000))
+
+    def _load_fallback_max_tokens(self) -> int:
+        raw = os.getenv("DOCGEN_MAX_TOKENS_FALLBACK", "5200")
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            return 5200
+        return max(self._load_max_tokens(), min(value, 6000))
+
     def _ensure_llm(self) -> AzureChatOpenAI:
         if self._llm is None:
-            config = _create_file_load_chat_config()
-            self._llm = AzureChatOpenAI(
-                azure_endpoint=config["endpoint"],
-                api_key=config["api_key"],
-                api_version=config["api_version"],
-                azure_deployment=config["deployment"],
-                model=config["model"],
-                temperature=0.2,
-                max_tokens=1600,
-                max_retries=3,
-            )
+            self._llm = self._build_llm(max_tokens=self._load_max_tokens())
         return self._llm
 
     def _ensure_chain(self) -> RunnableSequence:
@@ -102,10 +126,33 @@ class DocumentGenerationAgent:
             "context": context or "(컨텍스트 제공되지 않음)",
             "instructions": instructions or "",
         }
-        doc: _GeneratedDocumentSchema = await chain.ainvoke(params)
-        return GeneratedDocument(
-            title=(doc.title or "").strip(),
-            summary=(doc.summary or "").strip(),
-            content=(doc.content or "").strip(),
-        )
+        try:
+            doc: _GeneratedDocumentSchema = await chain.ainvoke(params)
+            return GeneratedDocument(
+                title=(doc.title or "").strip(),
+                summary=(doc.summary or "").strip(),
+                content=(doc.content or "").strip(),
+            )
+        except LengthFinishReasonError:
+            llm_big = self._build_llm(max_tokens=self._load_fallback_max_tokens())
+            chain_big = self._prompt | llm_big.with_structured_output(_GeneratedDocumentSchema)
+            try:
+                doc = await chain_big.ainvoke(params)
+                return GeneratedDocument(
+                    title=(doc.title or "").strip(),
+                    summary=(doc.summary or "").strip(),
+                    content=(doc.content or "").strip(),
+                )
+            except LengthFinishReasonError:
+                short_prompt = self._prompt.partial(
+                    instructions=(instructions or "")
+                    + "\n- content는 1200~1500자 요약본으로 제한하세요."
+                )
+                chain_short = short_prompt | llm_big.with_structured_output(_GeneratedDocumentSchema)
+                doc = await chain_short.ainvoke(params)
+                return GeneratedDocument(
+                    title=(doc.title or "").strip(),
+                    summary=(doc.summary or "").strip(),
+                    content=(doc.content or "").strip(),
+                )
 
