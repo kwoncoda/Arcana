@@ -187,6 +187,14 @@ const Separator = styled.div`
   }
 `;
 
+const DisabledNotice = styled.p`
+  width: 100%;
+  font-size: 13px;
+  color: #777;
+  margin: 0 0 12px 0;
+  text-align: center;
+`;
+
 // --- React Component ---
 
 function LoginPage() {
@@ -278,14 +286,28 @@ function LoginPage() {
 
       <Separator>또는</Separator>
 
-      <Button $social="kakao" disabled={loading}>
+      <DisabledNotice>카카오톡/구글 소셜 로그인은 현재 준비 중입니다. 아이디 로그인 기능을 이용해주세요.</DisabledNotice>
+
+      <Button
+        type="button"
+        $social="kakao"
+        disabled
+        aria-disabled="true"
+        title="카카오톡 로그인은 현재 준비 중입니다."
+      >
         {/* 아이콘 영역 (추후 svg/img 태그) */}
-        카카오톡으로 3초만에 로그인
+        카카오톡 로그인 (준비 중)
       </Button>
-      
-      <Button $social="google" disabled={loading}>
+
+      <Button
+        type="button"
+        $social="google"
+        disabled
+        aria-disabled="true"
+        title="구글ID 로그인은 현재 비활성화되어 있습니다."
+      >
         {/* 아이콘 영역 (추후 svg/img 태그) */}
-        구글ID 로그인으로 회원가입
+        구글ID 로그인 (준비 중)
       </Button>
     </Container>
   );

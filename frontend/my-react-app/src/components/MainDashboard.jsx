@@ -193,6 +193,78 @@ const ChatOverlayButton = styled.button`
   }
 `;
 
+const ConfirmationOverlay = styled(SyncingOverlay)`
+  z-index: 1300;
+  padding: 16px;
+`;
+
+const ConfirmationCard = styled(SyncingCard)`
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  max-width: 420px;
+  width: 100%;
+`;
+
+const ConfirmationTitle = styled.h3`
+  margin: 0;
+  font-size: 18px;
+  color: #1a202c;
+`;
+
+const ConfirmationMessage = styled.p`
+  margin: 0;
+  font-size: 14px;
+  color: #4a5568;
+  line-height: 1.5;
+
+  strong {
+    color: #1a202c;
+  }
+`;
+
+const ConfirmationActions = styled.div`
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 4px;
+`;
+
+const ConfirmationButton = styled.button`
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+
+  ${({ $variant }) =>
+    $variant === 'secondary'
+      ? `
+    background: #edf2f7;
+    color: #2d3748;
+    border-color: #e2e8f0;
+
+    &:hover {
+      background: #e2e8f0;
+    }
+  `
+      : `
+    background: #e53e3e;
+    color: #fff;
+    border-color: #c53030;
+
+    &:hover {
+      background: #c53030;
+    }
+  `}
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
+  }
+`;
+
 const MainContent = styled.main`
   flex: 1;
   display: flex;
@@ -955,6 +1027,7 @@ function MainDashboard() {
   const [connections, setConnections] = useState([]);
   const [loadingConnections, setLoadingConnections] = useState(true);
   const [disconnectingSource, setDisconnectingSource] = useState(null);
+  const [pendingDisconnect, setPendingDisconnect] = useState(null);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState(null);
   const [shouldAutoRefresh, setShouldAutoRefresh] = useState(false);
@@ -1377,7 +1450,7 @@ function MainDashboard() {
     document.body.removeChild(textArea);
   };
 
-  const handleDisconnectConnection = async (event, connection) => {
+  const handleDisconnectConnection = (event, connection) => {
     event?.stopPropagation?.();
 
     const details = getProviderDetails(connection);
@@ -1391,13 +1464,22 @@ function MainDashboard() {
       return;
     }
 
-    const confirmMessage = `${details.name} 데이터 소스 연결을 끊으시겠습니까?`;
-    const shouldDisconnect = window.confirm(confirmMessage);
-    if (!shouldDisconnect) return;
+    setPendingDisconnect({ connection, details, endpoint });
+  };
+
+  const cancelDisconnectConnection = () => {
+    setPendingDisconnect(null);
+  };
+
+  const confirmDisconnectConnection = async () => {
+    if (!pendingDisconnect) return;
+
+    const { connection, details, endpoint } = pendingDisconnect;
 
     const token = getAccessToken();
     if (!token) {
       navigate('/login');
+      setPendingDisconnect(null);
       return;
     }
 
@@ -1406,6 +1488,10 @@ function MainDashboard() {
       await apiClient.post(endpoint, {});
 
       await fetchConnections(token);
+      setSyncMessage({
+        variant: 'success',
+        message: `${details.name} 데이터 소스 연결을 해제했습니다.`,
+      });
     } catch (err) {
       console.error('Failed to disconnect data source:', err);
       const status = err?.response?.status;
@@ -1425,6 +1511,7 @@ function MainDashboard() {
       });
     } finally {
       setDisconnectingSource(null);
+      setPendingDisconnect(null);
     }
   };
 
@@ -1460,6 +1547,33 @@ function MainDashboard() {
 
   return (
     <DashboardContainer>
+
+      <ConfirmationOverlay $visible={!!pendingDisconnect}>
+        <ConfirmationCard>
+          <ConfirmationTitle>데이터 소스 연결 해제</ConfirmationTitle>
+          <ConfirmationMessage>
+            <strong>{pendingDisconnect?.details?.name}</strong> 데이터 소스 연결을 해제하면 자동 동기화가 중단됩니다.
+            관련 지식 베이스가 더 이상 업데이트되지 않습니다. 계속 진행하시겠어요?
+          </ConfirmationMessage>
+          <ConfirmationActions>
+            <ConfirmationButton
+              type="button"
+              $variant="secondary"
+              onClick={cancelDisconnectConnection}
+              disabled={disconnectingSource !== null}
+            >
+              취소
+            </ConfirmationButton>
+            <ConfirmationButton
+              type="button"
+              onClick={confirmDisconnectConnection}
+              disabled={disconnectingSource !== null}
+            >
+              연결 해제
+            </ConfirmationButton>
+          </ConfirmationActions>
+        </ConfirmationCard>
+      </ConfirmationOverlay>
 
       <ChatLoadingOverlay $visible={isChatLoading}>
         <ChatLoadingCard>
