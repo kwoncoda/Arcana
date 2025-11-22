@@ -87,7 +87,7 @@ class FinalAnswerAgent:
                 azure_deployment=config["deployment"],
                 model="gpt-4o",
                 temperature=0.2,
-                max_tokens=600,
+                max_tokens=1024,
                 max_retries=3,
             )
         return self._llm
