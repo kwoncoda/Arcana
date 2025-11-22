@@ -1292,7 +1292,11 @@ function MainDashboard() {
           shouldStream: false,
         };
 
-        const completedMessages = [...pendingMessages, aiMessage];
+        const sourceMessages =
+          Array.isArray(pendingMessages) && pendingMessages.length > 0
+            ? pendingMessages
+            : chatMessages;
+        const completedMessages = [...sourceMessages, aiMessage];
         persistChatState(completedMessages, false, '');
       } catch (err) {
         if (err.code === 'ERR_CANCELED') {
@@ -1322,19 +1326,16 @@ function MainDashboard() {
         chatRequestControllerRef.current = null;
       }
     },
-    [navigate, persistChatState]
+    [chatMessages, navigate, persistChatState]
   );
 
   const ensurePendingUserMessage = useCallback(
     (query, messages) => {
       if (!query) return messages;
 
+      const baseMessages = Array.isArray(messages) ? [...messages] : [];
       const userMessage = { role: 'user', content: query, id: Date.now() };
-      let nextMessages = messages;
-      setChatMessages(prev => {
-        nextMessages = [...prev, userMessage];
-        return nextMessages;
-      });
+      const nextMessages = [...baseMessages, userMessage];
 
       persistChatState(nextMessages, true, query);
       return nextMessages;
