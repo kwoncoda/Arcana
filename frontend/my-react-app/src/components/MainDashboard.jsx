@@ -915,6 +915,7 @@ function MainDashboard() {
 
   const [chatMessages, setChatMessages] = useState([]);
   const [isChatLoading, setIsChatLoading] = useState(false);
+  const [isAutoScrollEnabled, setIsAutoScrollEnabled] = useState(true);
   const chatContainerRef = useRef(null);
   const textareaRef = useRef(null);
   const chatRequestControllerRef = useRef(null);
@@ -1239,10 +1240,26 @@ function MainDashboard() {
   }, [handleRefreshKnowledge, shouldAutoRefresh, syncing]);
 
   useEffect(() => {
-    if (chatContainerRef.current) {
+    if (chatContainerRef.current && isAutoScrollEnabled) {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
-  }, [chatMessages, isChatLoading]);
+  }, [chatMessages, isChatLoading, isAutoScrollEnabled]);
+
+  useEffect(() => {
+    const container = chatContainerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      const isAtBottom = Math.abs(scrollHeight - scrollTop - clientHeight) < 10;
+      setIsAutoScrollEnabled(isAtBottom);
+    };
+
+    container.addEventListener('scroll', handleScroll);
+    return () => {
+      container.removeEventListener('scroll', handleScroll);
+    };
+  }, []);
 
   const autoResizeTextarea = (element) => {
     element.style.height = 'auto';
