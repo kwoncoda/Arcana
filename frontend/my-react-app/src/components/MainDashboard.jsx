@@ -126,6 +126,22 @@ const SyncingCard = styled.div`
   gap: 14px;
 `;
 
+const SyncingTextGroup = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  strong {
+    font-size: 15px;
+    color: #1a202c;
+  }
+
+  span {
+    font-size: 13px;
+    color: #4a5568;
+  }
+`;
+
 const ChatLoadingCard = styled(SyncingCard)`
   max-width: 420px;
   width: 90%;
@@ -147,22 +163,6 @@ const SyncingSpinner = styled.div`
   border-radius: 50%;
   aspect-ratio: 1 / 1;
   animation: ${spin} 0.9s linear infinite;
-`;
-
-const SyncingTextGroup = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-
-  strong {
-    font-size: 15px;
-    color: #1a202c;
-  }
-
-  span {
-    font-size: 13px;
-    color: #4a5568;
-  }
 `;
 
 const ChatOverlayActions = styled.div`
