@@ -301,29 +301,6 @@ async def notion_oauth_callback(
     sync_failed = False
     sync_result = None
 
-    user = db.get(User, user_idx) if user_idx else None
-    if user:
-        try:
-            workspace = _resolve_workspace(db, user)
-            data_source = db.scalar(
-                select(DataSource).where(
-                    DataSource.workspace_idx == workspace.idx,
-                    DataSource.type == "notion",
-                )
-            )
-            if data_source:
-                sync_result = await _sync_notion_workspace(
-                    db,
-                    credential=cred,
-                    workspace=workspace,
-                    data_source=data_source,
-                )
-            else:
-                sync_failed = True
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.exception("Notion sync after OAuth failed: %s", exc)
-            sync_failed = True
-
     if "application/json" in request.headers.get("accept", "").lower():
         return JSONResponse(
             status_code=status.HTTP_200_OK,

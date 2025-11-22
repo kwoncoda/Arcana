@@ -87,7 +87,7 @@ function GoogleOAuthCallback() {
           state: {
             googleConnected: true,
             startSyncSources: ['google-drive'],
-            syncOverlayMessage: 'Google Drive 데이터로 지식 베이스를 갱신하고 있습니다...'
+            syncOverlayMessage: '연동중입니다. 잠시만 기다려주세요...'
           },
         });
 

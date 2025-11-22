@@ -342,14 +342,6 @@ async def google_drive_oauth_callback(
 
     sync_failed = False
     sync_result = None
-    user = db.get(User, user_idx) if user_idx else None
-
-    if user:
-        try:
-            sync_result = await pull_google_drive_files(db=db, user=user)  # type: ignore[arg-type]
-        except Exception as exc:  # pragma: no cover - defensive
-            sync_failed = True
-            sync_result = {"error": str(exc)}
 
     if "application/json" in request.headers.get("accept", "").lower():
         return JSONResponse(
