@@ -35,6 +35,8 @@ class FinalAnswerAgent:
                         "- 필요하면 문장을 더 읽기 쉽게 정리하되, 의미를 왜곡하지 마세요.\n"
                         "- chat 모드에서는 워크스페이스 문서를 언급하지 말고 자연스럽게 대화하세요.\n"
                         "- generate 모드에서는 생성된 문서의 제목/요약/URL이 있으면 그대로 알려주세요.\n"
+                        "- 초안에 있는 [[...]] 스타일 태그(예: [[P]], [[BULLET]], [[H2]], [[/P]])는 해석만 하고, **최종 출력에는 절대 포함하지 마세요.**\n"
+                        "- [[DIV]] --- [[/DIV]] 는 문단 구분선으로만 해석하고 출력에는 넣지 마세요.\n"
                     ),
                 ),
                 (
@@ -56,8 +58,14 @@ class FinalAnswerAgent:
                     "system",
                     (
                         "당신은 Arcana의 응답 요약기입니다."
-                        " 반드시 아주 짧은 한국어 문장 2~3줄만 반환하세요."
+                        " 반드시 아주 짧은 한국어 문장 3~4줄만 반환하세요."
                         " 새로운 사실을 추가하지 말고 초안 내용만 보존하여 핵심만 정리하세요."
+                        "- 초안에 포함된 URL/인용 라인은 그대로 보존하세요.\n"
+                        "- 필요하면 문장을 더 읽기 쉽게 정리하되, 의미를 왜곡하지 마세요.\n"
+                        "- chat 모드에서는 워크스페이스 문서를 언급하지 말고 자연스럽게 대화하세요.\n"
+                        "- generate 모드에서는 생성된 문서의 제목/요약/URL이 있으면 그대로 알려주세요.\n"
+                        "- 초안에 있는 [[...]] 스타일 태그(예: [[P]], [[BULLET]], [[H2]], [[/P]])는 해석만 하고, **최종 출력에는 절대 포함하지 마세요.**\n"
+                        "- [[DIV]] --- [[/DIV]] 는 문단 구분선으로만 해석하고 출력에는 넣지 마세요.\n"
                     ),
                 ),
                 (
@@ -67,7 +75,7 @@ class FinalAnswerAgent:
                         "워크스페이스: {workspace_name}\n"
                         "사용자 질문: {question}\n"
                         "초안(answer_draft):\n{answer_draft}\n\n"
-                        "핵심만 2~3문장으로 아주 짧게 요약하세요."
+                        "핵심만 3~4문장으로 아주 짧게 요약하세요."
                     ),
                 ),
             ]
@@ -85,7 +93,7 @@ class FinalAnswerAgent:
                 api_key=config["api_key"],
                 api_version=config["api_version"],
                 azure_deployment=config["deployment"],
-                model="gpt-4o",
+                model=config["model"],
                 temperature=0.2,
                 max_tokens=1024,
                 max_retries=3,
@@ -100,7 +108,7 @@ class FinalAnswerAgent:
 
     def _ensure_short_chain(self) -> RunnableSequence:
         if self._short_chain is None:
-            llm = self._ensure_llm().bind(max_tokens=256)
+            llm = self._ensure_llm()
             self._short_chain = self._short_prompt | llm | self._parser
         return self._short_chain
 
