@@ -25,6 +25,11 @@ import {
   X     // [추가] 닫기 아이콘
 } from 'lucide-react';
 
+const rotate = keyframes`
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+`;
+
 // --- 스트리밍 효과를 위한 커스텀 훅 ---
 function useInterval(callback, delay) {
   const savedCallback = useRef();
@@ -90,6 +95,54 @@ const MobileOverlay = styled.div`
     height: 100%;
     background-color: rgba(0, 0, 0, 0.5);
     z-index: 999;
+  }
+`;
+
+const SyncingOverlay = styled.div`
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.45);
+  z-index: 1500;
+  opacity: ${({ $visible }) => ($visible ? 1 : 0)};
+  pointer-events: ${({ $visible }) => ($visible ? 'auto' : 'none')};
+  transition: opacity 0.2s ease;
+`;
+
+const SyncingCard = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 28px;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 16px 45px rgba(0, 0, 0, 0.18);
+  min-width: 320px;
+`;
+
+const SyncSpinner = styled.div`
+  width: 32px;
+  height: 32px;
+  border: 4px solid #E2E8F0;
+  border-top-color: #7C3AED;
+  border-radius: 50%;
+  animation: ${rotate} 0.9s linear infinite;
+`;
+
+const SyncingText = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1A202C;
+
+  span {
+    font-size: 13px;
+    font-weight: 500;
+    color: #4A5568;
   }
 `;
 
@@ -850,6 +903,7 @@ function MainDashboard() {
   const [loadingConnections, setLoadingConnections] = useState(true);
   const [disconnectingSource, setDisconnectingSource] = useState(null);
   const [syncing, setSyncing] = useState(false);
+  const [syncingMessage, setSyncingMessage] = useState('');
   const [syncMessage, setSyncMessage] = useState(null);
   const navigate = useNavigate();
   const location = useLocation();
@@ -933,29 +987,6 @@ function MainDashboard() {
   }, [location, navigate]);
 
   useEffect(() => {
-    if (location.state?.notionConnected) {
-      setSyncMessage({
-        variant: location.state.notionSyncFailed ? 'warning' : 'success',
-        message: location.state.notionSyncFailed
-          ? '노션 연동은 완료되었지만 지식 베이스 갱신 중 오류가 발생했습니다. 다시 시도해주세요.'
-          : '노션이 연동되었습니다.',
-      });
-      navigate(location.pathname, { replace: true, state: {} });
-      return;
-    }
-
-    if (location.state?.googleConnected) {
-      setSyncMessage({
-        variant: location.state.googleSyncFailed ? 'warning' : 'success',
-        message: location.state.googleSyncFailed
-          ? 'Google Drive 연동은 완료되었지만 지식 베이스 갱신 중 오류가 발생했습니다. 다시 시도해주세요.'
-          : 'Google Drive가 연동되었습니다.',
-      });
-      navigate(location.pathname, { replace: true, state: {} });
-    }
-  }, [location, navigate]);
-
-  useEffect(() => {
     if (chatContainerRef.current) {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
@@ -985,7 +1016,7 @@ function MainDashboard() {
     }
   };
 
-  const handleRefreshKnowledge = async () => {
+  const handleRefreshKnowledge = useCallback(async (targetSources = null, overlayText) => {
     if (syncing) return;
 
     const token = getAccessToken();
@@ -998,11 +1029,15 @@ function MainDashboard() {
       return;
     }
 
+    const activeOverlayMessage = overlayText || '지식 베이스를 갱신 중입니다...';
     setSyncing(true);
+    setSyncingMessage(activeOverlayMessage);
     setSyncMessage({
       variant: 'info',
-      message: '지식 베이스를 갱신 중입니다...'
+      message: activeOverlayMessage
     });
+
+    const normalizedTargets = targetSources && targetSources.preventDefault ? null : targetSources;
 
     let availableConnections = connections;
 
@@ -1028,10 +1063,20 @@ function MainDashboard() {
         (conn) => conn && (conn.status === 'connected' || conn.connected)
       );
 
-      if (connectedSources.length === 0) {
+      const requestedTypes = Array.isArray(normalizedTargets)
+        ? normalizedTargets.map((type) => (type || '').toLowerCase())
+        : null;
+
+      const sourcesToSync = requestedTypes
+        ? connectedSources.filter((conn) => requestedTypes.includes((conn?.type || '').toLowerCase()))
+        : connectedSources;
+
+      if (sourcesToSync.length === 0) {
         setSyncMessage({
           variant: 'warning',
-          message: '연결된 데이터 소스가 없습니다. 먼저 데이터 소스를 연동해주세요.'
+          message: requestedTypes
+            ? '요청한 데이터 소스를 찾을 수 없습니다. 먼저 연동을 확인해주세요.'
+            : '연결된 데이터 소스가 없습니다. 먼저 데이터 소스를 연동해주세요.'
         });
         return;
       }
@@ -1041,7 +1086,7 @@ function MainDashboard() {
       const failureMessages = [];
       let unauthorizedDetected = false;
 
-      for (const source of connectedSources) {
+      for (const source of sourcesToSync) {
         if (unauthorizedDetected) {
           break;
         }
@@ -1132,8 +1177,40 @@ function MainDashboard() {
       });
     } finally {
       setSyncing(false);
+      setSyncingMessage('');
     }
-  };
+  }, [syncing, connections, fetchConnections, navigate]);
+
+  useEffect(() => {
+    const state = location.state || {};
+    const connectionMessages = [];
+
+    if (state.notionConnected) {
+      connectionMessages.push('노션이 연동되었습니다.');
+    }
+
+    if (state.googleConnected) {
+      connectionMessages.push('Google Drive가 연동되었습니다.');
+    }
+
+    if (connectionMessages.length > 0) {
+      setSyncMessage({
+        variant: 'success',
+        message: connectionMessages.join(' ')
+      });
+    }
+
+    if (Array.isArray(state.triggerSyncSources) && state.triggerSyncSources.length > 0) {
+      handleRefreshKnowledge(
+        state.triggerSyncSources,
+        state.syncOverlayMessage || '연동된 데이터 소스를 갱신 중입니다...'
+      );
+    }
+
+    if (Object.keys(state).length > 0) {
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location, navigate, handleRefreshKnowledge]);
 
   const handleSendMessage = async () => {
     const query = chatInput.trim();
@@ -1305,9 +1382,19 @@ function MainDashboard() {
 
   return (
     <DashboardContainer>
-      
+
       {/* [추가] 모바일 오버레이 */}
       <MobileOverlay $isOpen={isMobileSidebarOpen} onClick={toggleMobileSidebar} />
+
+      <SyncingOverlay $visible={syncing}>
+        <SyncingCard>
+          <SyncSpinner />
+          <SyncingText>
+            <div>{syncingMessage || '지식 베이스를 갱신 중입니다...'}</div>
+            <span>잠시만 기다려주세요.</span>
+          </SyncingText>
+        </SyncingCard>
+      </SyncingOverlay>
 
       {/* [수정] Sidebar에 isOpen prop 전달 */}
       <Sidebar $isOpen={isMobileSidebarOpen}>
