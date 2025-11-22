@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import styled, { css } from 'styled-components';
-import axios from 'axios';
+import apiClient, { storeTokens } from '../api/client';
 // 1. useNavigate, Link import
 import { useNavigate, Link } from 'react-router-dom';
 
@@ -207,15 +207,14 @@ function LoginPage() {
     const apiUrl = '/api/users/login'; 
 
     try {
-      const response = await axios.post(apiUrl, { id, password });
+      const response = await apiClient.post(apiUrl, { id, password });
       
       // 3. 닉네임 받아오기
       const { access_token, refresh_token, nickname } = response.data;
       console.log('Login Success:', response.data);
 
-      // 4. 토큰을 localStorage에 저장
-      localStorage.setItem('accessToken', access_token);
-      localStorage.setItem('refreshToken', refresh_token);
+      // 4. 토큰을 세션 스토리지에 저장
+      storeTokens({ access_token, refresh_token });
       // 5. 닉네임 저장
       if (nickname) {
         localStorage.setItem('userNickname', nickname);

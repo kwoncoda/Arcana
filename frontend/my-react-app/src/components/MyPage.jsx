@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import styled, { css } from 'styled-components';
 import { useNavigate, Link } from 'react-router-dom';
+import { clearTokens } from '../api/client';
 
 // --- Styled Components (로그인 페이지와 유사) ---
 
@@ -145,8 +146,7 @@ function MyPage() {
 
   // 로그아웃 핸들러
   const handleLogout = () => {
-    localStorage.removeItem('accessToken');
-    localStorage.removeItem('refreshToken');
+    clearTokens();
     localStorage.removeItem('userNickname');
     navigate('/login');
   };
