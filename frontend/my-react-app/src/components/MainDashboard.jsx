@@ -1014,43 +1014,6 @@ function MainDashboard() {
     }
   }, [location, navigate]);
 
-  useEffect(() => {
-    if (shouldAutoRefresh && !syncing) {
-      setShouldAutoRefresh(false);
-      handleRefreshKnowledge();
-    }
-  }, [handleRefreshKnowledge, shouldAutoRefresh, syncing]);
-
-  useEffect(() => {
-    if (chatContainerRef.current) {
-      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
-    }
-  }, [chatMessages, isChatLoading]);
-
-  const autoResizeTextarea = (element) => {
-    element.style.height = 'auto'; 
-    element.style.height = `${element.scrollHeight}px`; 
-  };
-
-  const handleTextareaChange = (e) => {
-    setChatInput(e.target.value);
-    autoResizeTextarea(e.target);
-  };
-
-  // [수정] 로그아웃 로직 제거 (MyPage에서 처리)
-
-  // [추가] 사이드바 토글 함수
-  const toggleMobileSidebar = () => {
-    setIsMobileSidebarOpen(!isMobileSidebarOpen);
-  };
-
-  // [추가] 사이드바 메뉴 클릭 시 닫기
-  const handleNavClick = () => {
-    if (window.innerWidth <= 768) {
-      setIsMobileSidebarOpen(false);
-    }
-  };
-
   const handleRefreshKnowledge = useCallback(async () => {
     if (syncing) return;
 
@@ -1265,6 +1228,43 @@ function MainDashboard() {
     } finally {
       setIsChatLoading(false);
       chatRequestControllerRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    if (shouldAutoRefresh && !syncing) {
+      setShouldAutoRefresh(false);
+      handleRefreshKnowledge();
+    }
+  }, [handleRefreshKnowledge, shouldAutoRefresh, syncing]);
+
+  useEffect(() => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, [chatMessages, isChatLoading]);
+
+  const autoResizeTextarea = (element) => {
+    element.style.height = 'auto';
+    element.style.height = `${element.scrollHeight}px`;
+  };
+
+  const handleTextareaChange = (e) => {
+    setChatInput(e.target.value);
+    autoResizeTextarea(e.target);
+  };
+
+  // [수정] 로그아웃 로직 제거 (MyPage에서 처리)
+
+  // [추가] 사이드바 토글 함수
+  const toggleMobileSidebar = () => {
+    setIsMobileSidebarOpen(!isMobileSidebarOpen);
+  };
+
+  // [추가] 사이드바 메뉴 클릭 시 닫기
+  const handleNavClick = () => {
+    if (window.innerWidth <= 768) {
+      setIsMobileSidebarOpen(false);
     }
   };
 
