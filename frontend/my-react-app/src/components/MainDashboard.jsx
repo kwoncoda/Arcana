@@ -1327,11 +1327,8 @@ function MainDashboard() {
 
   const ensurePendingUserMessage = useCallback(
     (query, messages) => {
-      const alreadyHasMessage = messages.some(
-        (msg) => msg.role === 'user' && msg.content === query
-      );
-      if (alreadyHasMessage) return messages;
-      const userMessage = { role: 'user', content: query };
+      if (!query) return messages;
+      const userMessage = { role: 'user', content: query, id: Date.now() };
       const updated = [...messages, userMessage];
       persistChatState(updated, true, query);
       return updated;
