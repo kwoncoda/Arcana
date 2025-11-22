@@ -4,13 +4,13 @@
 
 ## 상태와 결과 구조
 - **AgentState**: 질의어(`query`), 워크스페이스 정보(`workspace_idx`, `workspace_name`, `storage_uri`), DB 세션(`db`), 사용자 식별자(`user_idx`), 결정(`decision`), 검색 결과(`result`), 생성 컨텍스트(`retrieval`), 생성물(`generated_document`), 실행 모드(`mode`), 생성한 노션 페이지(`notion_page`), 최종 문장 다듬기 지침(`final_message_instructions`)을 포함합니다.
-- **AgentExecutionResult**: 최종 모드(`search`/`generate`/`chat`), 사용자 응답(`result`), 생성된 노션 페이지 ID/URL(존재 시), 의사결정, 생성된 문서를 API 계층에 반환합니다.
+- **AgentExecutionResult**: 최종 모드(`search`/`generate`/`chat`), 사용자 응답(`result`), 대표 문서 URL/노션 페이지 ID·URL(존재 시), 의사결정, 생성된 문서를 API 계층에 반환합니다.
 
 ## 노드 정의와 역할
 - **decide** (`_node_decide`)
   - `DecisionAgent`를 호출해 사용자의 요청을 `search`, `generate`, `chat` 중 하나로 분류하고, 생성 시 RAG 사용 여부(`use_rag`)와 지침을 수집합니다.
 - **search** (`_node_search`)
-  - `WorkspaceRAGSearchAgent.search`를 실행해 하이브리드 검색과 답변 생성을 수행하고, 모드를 `search`로 설정합니다.
+  - `WorkspaceRAGSearchAgent.search`를 실행해 하이브리드 검색과 답변을 수행하고, 최상위 관련 문서 URL을 `result.top_url`에 저장한 뒤 모드를 `search`로 설정합니다.
 - **prepare_rag** (`_node_prepare_rag`)
   - `WorkspaceRAGSearchAgent.retrieve_for_generation`으로 생성용 컨텍스트와 인용 정보를 수집합니다.
 - **generate** (`_node_generate`)
@@ -70,4 +70,4 @@ flowchart TD
    - `generate`가 문서를 작성합니다.
    - `create_page`가 노션 페이지를 생성하고 사용자 응답을 완성합니다.
 5. `final_answer`가 프롬프트 기반으로 검색/생성 결과 초안을 다듬어 최종 `SearchResult`를 구성합니다.
-6. 최종 상태의 `mode`, `result`, 노션 페이지 정보, 결정/생성 결과를 `AgentExecutionResult`로 반환합니다.
+6. 최종 상태의 `mode`, `result`, 노션 페이지 정보(또는 검색 시 최상위 URL), 결정/생성 결과를 `AgentExecutionResult`로 반환합니다.

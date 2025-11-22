@@ -195,6 +195,7 @@ class WorkspaceAgentOrchestrator:
             question=state["query"],
             answer=answer,
             citations=list(citations),
+            top_url=page_ref.url,
         )
         return {"result": result, "notion_page": page_ref}
 
@@ -210,7 +211,7 @@ class WorkspaceAgentOrchestrator:
         extras: list[str] = []
         if mode == "search":
             extras.append(
-                "검색 결과에 포함된 링크와 핵심 문구는 그대로 유지하고, 불확실하면 모른다고 답하세요."
+                "검색 답변의 핵심 문구는 그대로 유지하되, 링크는 답변 본문에 추가하지 마세요. 불확실하면 모른다고 답하세요."
             )
             if not result.citations:
                 extras.append(
@@ -236,6 +237,7 @@ class WorkspaceAgentOrchestrator:
             question=result.question,
             answer=refined_answer,
             citations=result.citations,
+            top_url=getattr(result, "top_url", None),
         )
         return {"result": refined_result, "mode": mode}
 
@@ -281,11 +283,12 @@ class WorkspaceAgentOrchestrator:
 
         mode = final_state.get("mode", "search")
         page_ref = final_state.get("notion_page")
+        notion_page_url = page_ref.url if page_ref else getattr(result, "top_url", None)
         return AgentExecutionResult(
             mode=mode,
             result=result,
             notion_page_id=page_ref.page_id if page_ref else None,
-            notion_page_url=page_ref.url if page_ref else None,
+            notion_page_url=notion_page_url,
             decision=final_state.get("decision"),
             generated_document=final_state.get("generated_document"),
         )
