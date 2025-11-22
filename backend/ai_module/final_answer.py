@@ -79,14 +79,23 @@ class FinalAnswerAgent:
         """최종 사용자 응답을 생성한다."""
 
         chain = self._ensure_chain()
-        rendered = await chain.ainvoke(
-            {
-                "answer_draft": answer_draft,
-                "question": question,
-                "workspace_name": workspace_name,
-                "mode": mode,
-                "custom_instructions": custom_instructions or "(추가 가이드 없음)",
-            }
-        )
-        return rendered.strip()
+        payload = {
+            "answer_draft": answer_draft,
+            "question": question,
+            "workspace_name": workspace_name,
+            "mode": mode,
+            "custom_instructions": custom_instructions or "(추가 가이드 없음)",
+        }
+
+        try:
+            rendered = await chain.ainvoke(payload)
+        except Exception:
+            # 편집 실패 시 초안을 그대로 사용해 빈 응답을 방지한다.
+            return answer_draft.strip() or "지금은 답변을 준비하지 못했어요. 다시 한번 말씀해 주세요."
+
+        refined = rendered.strip()
+        if refined:
+            return refined
+        # 모델이 빈 문자열을 반환한 경우 초안을 그대로 전달한다.
+        return answer_draft.strip() or "지금은 답변을 준비하지 못했어요. 다시 한번 말씀해 주세요."
 

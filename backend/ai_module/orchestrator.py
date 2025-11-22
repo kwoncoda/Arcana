@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Optional, TypedDict
 
+from langchain_core.exceptions import OutputParserException
+from openai import LengthFinishReasonError
 from langgraph.graph import END, StateGraph
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
@@ -135,12 +137,26 @@ class WorkspaceAgentOrchestrator:
         retrieval = state.get("retrieval")
         context = retrieval.context if retrieval else ""
         decision = state["decision"]
-        generated = await self._generation_agent.generate(
-            query=state["query"],
-            context=context,
-            instructions=decision.instructions,
-        )
-        return {"generated_document": generated, "mode": "generate"}
+        try:
+            generated = await self._generation_agent.generate(
+                query=state["query"],
+                context=context,
+                instructions=decision.instructions,
+            )
+            return {"generated_document": generated, "mode": "generate"}
+        except (LengthFinishReasonError, OutputParserException, ValueError) as exc:
+            fallback_answer = "\n".join(
+                [
+                    "요청하신 초안이 길어 요약본으로 먼저 제공합니다.",
+                    "생성 과정에서 길이 제한 또는 파싱 오류가 감지되었습니다.",
+                ]
+            )
+            result = SearchResult(
+                question=state["query"],
+                answer=fallback_answer,
+                citations=[],
+            )
+            return {"result": result, "mode": "generate", "generation_error": str(exc)}
 
     async def _node_chat(self, state: AgentState) -> AgentState:
         answer = await self._chat_agent.respond(state["query"])
@@ -154,6 +170,9 @@ class WorkspaceAgentOrchestrator:
     async def _node_create_page(self, state: AgentState) -> AgentState:
         generated = state.get("generated_document")
         if not generated:
+            existing_result = state.get("result")
+            if existing_result:
+                return {"result": existing_result, "mode": state.get("mode", "generate")}
             raise RuntimeError("생성된 문서가 없어 노션 페이지를 만들 수 없습니다.")
 
         retrieval = state.get("retrieval")
