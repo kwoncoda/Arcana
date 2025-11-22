@@ -1,13 +1,16 @@
 """LangGraph 라우팅을 위한 행동 판단 에이전트."""
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass
 from typing import Literal, Optional
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableSequence
 from langchain_openai import AzureChatOpenAI
-from pydantic import BaseModel, Field
+from openai import LengthFinishReasonError
+from pydantic import BaseModel, Field, ValidationError
 
 from .ai_config import _decision_load_chat_config
 
@@ -70,6 +73,7 @@ class DecisionAgent:
                         "chat을 선택할 때는 use_rag=false로 둡니다."
                         "title_hint와 instructions는 생성 시에만 활용할 수 있는 간단한 힌트입니다."
                         "출력은 action, use_rag, rationale, title_hint, instructions 필드를 포함한 JSON 한 개만 반환하세요."
+                        " rationale은 60자 이내로 간결하게 작성합니다."
                     ),
                 ),
                 (
@@ -78,6 +82,22 @@ class DecisionAgent:
                         "사용자 요청: {query}\n"
                         "추가 참고 정보: {extra_context}"
                     ),
+                ),
+            ]
+        )
+        self._tight_prompt = ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    (
+                        "당신은 Arcana의 라우팅 어시스턴트입니다. 아주 짧은 JSON 한 개만 반환하세요."
+                        " action, use_rag, rationale, title_hint, instructions 필드만 포함하고"
+                        " rationale은 60자 미만으로 제한합니다."
+                    ),
+                ),
+                (
+                    "human",
+                    "사용자 요청: {query}\n추가 참고 정보: {extra_context}",
                 ),
             ]
         )
@@ -94,10 +114,25 @@ class DecisionAgent:
                 azure_deployment=config["deployment"],
                 model=config["model"],
                 temperature=0.0,
-                max_tokens=1024,
+                top_p=0.0,
+                max_tokens=192,
                 max_retries=3,
             )
         return self._llm
+
+    def _build_llm(self, *, max_tokens: int) -> AzureChatOpenAI:
+        config = _decision_load_chat_config()
+        return AzureChatOpenAI(
+            azure_endpoint=config["endpoint"],
+            api_key=config["api_key"],
+            api_version=config["api_version"],
+            azure_deployment=config["deployment"],
+            model=config["model"],
+            temperature=0.0,
+            top_p=0.0,
+            max_tokens=max_tokens,
+            max_retries=2,
+        )
 
     def _ensure_chain(self) -> RunnableSequence:
         if self._chain is None:
@@ -105,11 +140,8 @@ class DecisionAgent:
             self._chain = self._prompt | llm
         return self._chain
 
-    async def decide(self, query: str, extra_context: str = "") -> AgentDecision:
-        """LLM을 호출해 행동 결정을 내린다."""
-
-        chain = self._ensure_chain()
-        decision: _DecisionSchema = await chain.ainvoke({"query": query, "extra_context": extra_context})
+    @staticmethod
+    def _to_agent_decision(decision: _DecisionSchema) -> AgentDecision:
         return AgentDecision(
             action=decision.action,
             use_rag=decision.use_rag,
@@ -117,4 +149,46 @@ class DecisionAgent:
             title_hint=decision.title_hint.strip() if decision.title_hint else None,
             instructions=decision.instructions.strip() if decision.instructions else None,
         )
+
+    async def decide(self, query: str, extra_context: str = "") -> AgentDecision:
+        """LLM을 호출해 행동 결정을 내린다."""
+
+        payload = {"query": query, "extra_context": extra_context}
+        chain = self._ensure_chain()
+
+        try:
+            decision: _DecisionSchema = await chain.ainvoke(payload)
+            return self._to_agent_decision(decision)
+        except (LengthFinishReasonError, ValidationError, json.JSONDecodeError, Exception):
+            pass
+
+        tight_llm = self._build_llm(max_tokens=128)
+        tight_chain = self._tight_prompt | tight_llm.with_structured_output(_DecisionSchema)
+        try:
+            decision = await tight_chain.ainvoke(payload)
+            return self._to_agent_decision(decision)
+        except Exception:
+            try:
+                raw_text: str = await (self._tight_prompt | tight_llm).ainvoke(payload)
+                extracted = _safe_extract_json(raw_text)
+                validated = _DecisionSchema.model_validate(extracted)
+                return self._to_agent_decision(validated)
+            except Exception:
+                fallback = _DecisionSchema(
+                    action="search",
+                    use_rag=True,
+                    rationale="fallback-default",
+                    title_hint=None,
+                    instructions=None,
+                )
+                return self._to_agent_decision(fallback)
+
+
+def _safe_extract_json(text: str) -> dict:
+    """느슨한 문자열에서 JSON 객체 블록만 추출한다."""
+
+    match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+    if not match:
+        raise ValueError("No JSON object found in text")
+    return json.loads(match.group(0))
 
