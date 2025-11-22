@@ -882,9 +882,9 @@ const getInitials = (name) => {
 };
 
 // --- 스트리밍 메시지 컴포넌트 ---
-const StreamingAIMessage = ({ content, sourcePage, sourceId, isError, onCopy, onStreamUpdate }) => {
-  const [displayedText, setDisplayedText] = useState('');
-  const [isComplete, setIsComplete] = useState(false);
+const StreamingAIMessage = ({ content, sourcePage, sourceId, isError, shouldStream = true, onCopy, onStreamUpdate }) => {
+  const [displayedText, setDisplayedText] = useState(shouldStream ? '' : content);
+  const [isComplete, setIsComplete] = useState(!shouldStream);
   const streamDelay = 30;
 
   useInterval(() => {
@@ -900,11 +900,11 @@ const StreamingAIMessage = ({ content, sourcePage, sourceId, isError, onCopy, on
   }, streamDelay);
 
   useEffect(() => {
-    if (isError) {
+    if (!shouldStream || isError) {
       setDisplayedText(content);
       setIsComplete(true);
     }
-  }, [isError, content]);
+  }, [content, isError, shouldStream]);
 
   useEffect(() => {
     if (onStreamUpdate) {
@@ -983,16 +983,22 @@ function MainDashboard() {
   const applyStoredChatState = useCallback((state) => {
     if (!state) return;
     if (isMountedRef.current) {
-      setChatMessages(state.messages || []);
+      const normalizedMessages = (state.messages || []).map(msg =>
+        msg.role === 'ai' ? { ...msg, shouldStream: false } : msg
+      );
+      setChatMessages(normalizedMessages);
       setIsChatLoading(Boolean(state.isChatLoading));
       setPendingQuery(state.pendingQuery || '');
     }
   }, []);
 
   const persistChatState = useCallback((messages, loading, pending = '') => {
-    writeChatState({ messages, isChatLoading: loading, pendingQuery: pending });
+    const normalizedMessages = (messages || []).map(msg =>
+      msg.role === 'ai' ? { ...msg, shouldStream: false } : msg
+    );
+    writeChatState({ messages: normalizedMessages, isChatLoading: loading, pendingQuery: pending });
     if (isMountedRef.current) {
-      setChatMessages(messages);
+      setChatMessages(normalizedMessages);
       setIsChatLoading(loading);
       setPendingQuery(pending);
     }
@@ -1288,13 +1294,19 @@ function MainDashboard() {
         }
       );
 
-      const { answer, notion_page_url, notion_page_id } = res.data;
+      const { answer, notion_page_url, notion_page_id, response } = res.data || {};
+      const resolvedAnswer =
+        answer ??
+        response?.answer ??
+        res.data?.data?.answer ??
+        '답변을 불러오는 데 문제가 발생했습니다.';
 
       const aiMessage = {
         role: 'ai',
-        content: answer,
+        content: resolvedAnswer,
         sourcePage: notion_page_url,
         sourceId: notion_page_id,
+        shouldStream: false,
       };
 
       const completedMessages = [...pendingMessages, aiMessage];
@@ -1623,6 +1635,7 @@ function MainDashboard() {
                         sourcePage={msg.sourcePage}
                         sourceId={msg.sourceId}
                         isError={msg.isError}
+                        shouldStream={msg.shouldStream !== false}
                         onCopy={handleCopy}
                         onStreamUpdate={handleStreamUpdate}
                       />
