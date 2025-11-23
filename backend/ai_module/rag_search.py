@@ -176,11 +176,19 @@ class WorkspaceRAGSearchAgent:
             url = metadata.get("page_url") or metadata.get("source") or "URL 미상"
             chunk_id = metadata.get("chunk_id") or metadata.get("rag_document_id")
             page_id = metadata.get("page_id")
+            # 검색용 컨텍스트에서는 의미 중심 텍스트를 항상 우선한다.
+            # page_content 역시 적재 시 semantic/plain text만 담도록 구성되어 있다.
+            # 서식/코드가 포함된 formatted_text는 컨텍스트 품질 저하를 막기 위해 마지막
+            # 안전망으로만 사용한다.
+            semantic_text = metadata.get("semantic_text")
             formatted_text = metadata.get("formatted_text") or metadata.get("text")
-            if formatted_text:
-                snippet = self._truncate(formatted_text, limit=1200)
-            else:
-                snippet = self._truncate(doc.page_content, limit=1200)
+            snippet_source = (
+                semantic_text
+                or doc.page_content
+                or formatted_text
+                or ""
+            )
+            snippet = self._truncate(snippet_source, limit=1200)
             try:
                 score_display = f"{float(raw_score):.4f}"
             except (TypeError, ValueError):
@@ -209,8 +217,9 @@ class WorkspaceRAGSearchAgent:
             chunk_id = metadata.get("chunk_id") or metadata.get("rag_document_id")
             if chunk_id and chunk_id in citations:
                 continue
+            semantic_text = metadata.get("semantic_text")
             formatted_text = metadata.get("formatted_text") or metadata.get("text")
-            source_text = formatted_text or doc.page_content
+            source_text = semantic_text or doc.page_content or formatted_text or ""
             snippet = self._truncate(" ".join(source_text.split()), limit=360)
             try:
                 chunk_index = (
@@ -412,6 +421,9 @@ class WorkspaceRAGSearchAgent:
 
         citations = self._build_citations(docs_with_scores, index_map)
 
+        # downstream 노드(문서 생성, citation 재구성 등)는 documents 안의 metadata에 담긴
+        # formatted_text를 활용할 수 있다. 여기서는 검색 품질을 위해 semantic text 기반
+        # 컨텍스트만 구성하고, 원본 서식 정보는 그대로 전달만 한다.
         return RetrievalPayload(
             question=query,
             context=context,
