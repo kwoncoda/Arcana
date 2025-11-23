@@ -1,6 +1,7 @@
 """Chroma 기반 RAG 적재 및 검색 서비스."""
 from __future__ import annotations
 
+import html
 import os
 import re
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ from ai_module.ai_config import _EM_load_azure_openai_config
 
 _DEFAULT_STORAGE_ROOT = workspace_storage_path("_").parent
 _TOKEN_PATTERN = re.compile(r"[\w가-힣]+", re.UNICODE)
+_HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
 
 
 @dataclass(slots=True)
@@ -43,6 +45,42 @@ def _tokenize(text: str) -> List[str]:
     """Tokenize text for BM25 retrieval."""
 
     return [token.lower() for token in _TOKEN_PATTERN.findall(text or "")]
+
+
+def _strip_markup(text: str) -> str:
+    """Convert HTML/markup-heavy content into plain text."""
+
+    if not text:
+        return ""
+
+    normalized = re.sub(r"<\s*br\s*/?>", "\n", text, flags=re.IGNORECASE)
+    normalized = re.sub(
+        r"</\s*(p|div|section|article|li|ul|ol|table|tr)\s*>",
+        "\n",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"<\s*(script|style)[^>]*>.*?</\s*\1\s*>",
+        "",
+        normalized,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    stripped = _HTML_TAG_PATTERN.sub("", normalized)
+    unescaped = html.unescape(stripped)
+    unescaped = unescaped.replace("\r", "")
+    unescaped = re.sub(r"\n{3,}", "\n\n", unescaped)
+    return unescaped.strip()
+
+
+def _select_plain_text(metadata: Optional[Dict[str, Any]], fallback: str) -> str:
+    """Return precomputed plain text from metadata or derive it from fallback."""
+
+    if metadata:
+        plain = metadata.get("plain_text")
+        if isinstance(plain, str) and plain.strip():
+            return plain
+    return _strip_markup(fallback)
 
 
 class ChromaRAGService:
@@ -153,8 +191,12 @@ class ChromaRAGService:
         for idx, content in enumerate(documents):
             metadata = dict(metadatas[idx] or {})
             metadata.setdefault("rag_document_id", ids[idx])
-            langchain_docs.append(Document(page_content=content, metadata=metadata))
-            tokenized_corpus.append(_tokenize(content))
+            plain_text = _select_plain_text(metadata, content)
+            metadata.setdefault("plain_text", plain_text)
+            langchain_docs.append(
+                Document(page_content=plain_text, metadata=metadata)
+            )
+            tokenized_corpus.append(_tokenize(plain_text))
 
         retriever = BM25Okapi(tokenized_corpus)
         keyword_index = _KeywordIndex(
@@ -174,9 +216,15 @@ class ChromaRAGService:
         ids: List[str] = []
         for index, doc in enumerate(documents):
             metadata = dict(doc.metadata or {})
+            raw_content = doc.page_content or ""
+            plain_content = _strip_markup(raw_content)
+            if raw_content and raw_content != plain_content:
+                metadata.setdefault("formatted_text", raw_content)
+            metadata.setdefault("plain_text", plain_content)
             chunk_id = metadata.get("chunk_id")
             rag_id = chunk_id or metadata.get("page_id") or f"{index}-{uuid4()}"
             metadata.setdefault("rag_document_id", rag_id)
+            doc.page_content = plain_content
             doc.metadata = metadata
             normalized.append(doc)
             ids.append(chunk_id or rag_id)
@@ -426,6 +474,13 @@ class ChromaRAGService:
         )
         vector_results = store.similarity_search_with_score(query, k=vector_k)
 
+        normalized_vector_results: List[Tuple[Document, float]] = []
+        for doc, score in vector_results:
+            plain_text = _select_plain_text(doc.metadata, doc.page_content)
+            doc.page_content = plain_text
+            doc.metadata.setdefault("plain_text", plain_text)
+            normalized_vector_results.append((doc, score))
+
         keyword_results: List[Tuple[Document, float]] = []
         keyword_index = self._ensure_keyword_index(
             workspace_idx, workspace_name, storage_uri=storage_uri
@@ -447,14 +502,13 @@ class ChromaRAGService:
                         break
 
         if not keyword_results:
-            return vector_results[:final_top_n]
+            return normalized_vector_results[:final_top_n]
         if not vector_results:
             return keyword_results[:final_top_n]
 
-        vector_docs = [doc for doc, _ in vector_results]
         keyword_docs = [doc for doc, _ in keyword_results]
         merged = self._rrf_merge(
-            vector_docs,
+            [doc for doc, _ in normalized_vector_results],
             keyword_docs,
             top_n=candidate_pool,
             k_rrf=max(1, int(rrf_k)),
