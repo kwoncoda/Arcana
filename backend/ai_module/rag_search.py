@@ -13,7 +13,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda, RunnableMap, RunnableSequence
 from langchain_openai import AzureChatOpenAI
 
-from rag.chroma import ChromaRAGService
+from rag.chroma import ChromaRAGService, _select_plain_text
 
 from .ai_config import _gpt5_load_chat_config
 
@@ -182,10 +182,15 @@ class WorkspaceRAGSearchAgent:
             # 안전망으로만 사용한다.
             semantic_text = metadata.get("semantic_text")
             formatted_text = metadata.get("formatted_text") or metadata.get("text")
+            plain_text = metadata.get("plain_text") or _select_plain_text(
+                metadata, doc.page_content or formatted_text or ""
+            )
+            metadata["plain_text"] = plain_text
             snippet_source = (
                 semantic_text
-                or doc.page_content
+                or plain_text
                 or formatted_text
+                or doc.page_content
                 or ""
             )
             snippet = self._truncate(snippet_source, limit=1200)
@@ -219,7 +224,11 @@ class WorkspaceRAGSearchAgent:
                 continue
             semantic_text = metadata.get("semantic_text")
             formatted_text = metadata.get("formatted_text") or metadata.get("text")
-            source_text = semantic_text or doc.page_content or formatted_text or ""
+            plain_text = metadata.get("plain_text") or _select_plain_text(
+                metadata, doc.page_content or formatted_text or ""
+            )
+            metadata["plain_text"] = plain_text
+            source_text = semantic_text or plain_text or formatted_text or doc.page_content or ""
             snippet = self._truncate(" ".join(source_text.split()), limit=360)
             try:
                 chunk_index = (
