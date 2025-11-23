@@ -1,7 +1,6 @@
 """Chroma 기반 RAG 적재 및 검색 서비스."""
 from __future__ import annotations
 
-import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,6 +54,27 @@ class ChromaRAGService:
         self._vectorstores: dict[Tuple[int, str], Chroma] = {}
         self._keyword_indexes: dict[Tuple[int, str], _KeywordIndex] = {}
 
+    def _assert_writable_directory(self, path: Path) -> None:
+        """Ensure the persist directory is writable before initializing Chroma."""
+
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            path.chmod(0o775)
+        except OSError as exc:  # pragma: no cover - defensive guard for permission issues
+            raise RuntimeError(
+                f"Chroma persist_directory 생성 실패: {path}. 권한 또는 마운트 설정을 확인하세요."
+            ) from exc
+
+        probe = path / ".chroma_write_probe"
+        try:
+            probe.write_text("probe", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+        except OSError as exc:  # pragma: no cover - defensive guard for read-only mounts
+            raise RuntimeError(
+                "Chroma persist_directory에 쓸 수 없습니다. "
+                f"경로: {path}. 볼륨이 읽기 전용으로 마운트됐거나 권한이 부족합니다."
+            ) from exc
+
     def _collection_name(self, workspace_idx: int) -> str:
         return f"workspace-{workspace_idx}"
 
@@ -69,9 +89,11 @@ class ChromaRAGService:
     ) -> Path:
         if storage_uri:
             path = Path(storage_uri)
-            path.mkdir(parents=True, exist_ok=True)
-            return path
-        return self._workspace_directory(workspace_name)
+        else:
+            path = self._workspace_directory(workspace_name)
+
+        self._assert_writable_directory(path)
+        return path
 
     def _cache_key(
         self,
