@@ -166,7 +166,10 @@ class WorkspaceRAGSearchAgent:
         return text if len(text) <= limit else text[:limit].rstrip() + "…"
 
     def _build_context(
-        self, docs_with_scores: Sequence[Tuple[Document, float]]
+        self,
+        docs_with_scores: Sequence[Tuple[Document, float]],
+        *,
+        prefer_formatted: bool = False,
     ) -> Tuple[str, Dict[str, int]]:
         sections: List[str] = []
         index_map: Dict[str, int] = {}
@@ -186,13 +189,22 @@ class WorkspaceRAGSearchAgent:
                 metadata, doc.page_content or formatted_text or ""
             )
             metadata["plain_text"] = plain_text
-            snippet_source = (
-                semantic_text
-                or plain_text
-                or formatted_text
-                or doc.page_content
-                or ""
-            )
+            if prefer_formatted:
+                snippet_source = (
+                    formatted_text
+                    or semantic_text
+                    or plain_text
+                    or doc.page_content
+                    or ""
+                )
+            else:
+                snippet_source = (
+                    plain_text
+                    or semantic_text
+                    or formatted_text
+                    or doc.page_content
+                    or ""
+                )
             snippet = self._truncate(snippet_source, limit=1200)
             try:
                 score_display = f"{float(raw_score):.4f}"
@@ -215,6 +227,8 @@ class WorkspaceRAGSearchAgent:
         self,
         docs_with_scores: Sequence[Tuple[Document, float]],
         index_map: Dict[str, int],
+        *,
+        prefer_formatted: bool = False,
     ) -> List[Citation]:
         citations: "OrderedDict[str, Citation]" = OrderedDict()
         for doc, score in docs_with_scores:
@@ -228,7 +242,22 @@ class WorkspaceRAGSearchAgent:
                 metadata, doc.page_content or formatted_text or ""
             )
             metadata["plain_text"] = plain_text
-            source_text = semantic_text or plain_text or formatted_text or doc.page_content or ""
+            if prefer_formatted:
+                source_text = (
+                    formatted_text
+                    or semantic_text
+                    or plain_text
+                    or doc.page_content
+                    or ""
+                )
+            else:
+                source_text = (
+                    plain_text
+                    or semantic_text
+                    or formatted_text
+                    or doc.page_content
+                    or ""
+                )
             snippet = self._truncate(" ".join(source_text.split()), limit=360)
             try:
                 chunk_index = (
@@ -282,6 +311,7 @@ class WorkspaceRAGSearchAgent:
         storage_uri: Optional[str] = None,
         hybrid_alpha: Optional[float] = None,
         hybrid_rrf_k: Optional[int] = None,
+        prefer_formatted: bool = False,
     ) -> Tuple[List[Tuple[Document, float]], Dict[str, int], str]:
         """질문과 워크스페이스 정보를 토대로 컨텍스트 빌딩에 필요한 문서를 수집한다."""
 
@@ -336,10 +366,14 @@ class WorkspaceRAGSearchAgent:
             return [], {}, ""
 
         docs_with_scores = docs_with_scores[:top_k]
-        context, index_map = self._build_context(docs_with_scores)
+        context, index_map = self._build_context(
+            docs_with_scores, prefer_formatted=prefer_formatted
+        )
         if len(context) > 12000:  # 간단한 컨텍스트 길이 제한
             docs_with_scores = docs_with_scores[: max(2, top_k - 1)]
-            context, index_map = self._build_context(docs_with_scores)
+            context, index_map = self._build_context(
+                docs_with_scores, prefer_formatted=prefer_formatted
+            )
         return docs_with_scores, index_map, context
 
     def search(
@@ -361,6 +395,7 @@ class WorkspaceRAGSearchAgent:
             storage_uri=storage_uri,
             hybrid_alpha=hybrid_alpha,
             hybrid_rrf_k=hybrid_rrf_k,
+            prefer_formatted=False,
         )
 
         if not docs_with_scores:
@@ -387,7 +422,9 @@ class WorkspaceRAGSearchAgent:
                 citations=[],
         )
 
-        citations = self._build_citations(docs_with_scores, index_map)
+        citations = self._build_citations(
+            docs_with_scores, index_map, prefer_formatted=False
+        )
         top_url = self._select_top_citation_url(citations)
         if top_url and top_url in answer:
             answer = answer.replace(top_url, "").strip()
@@ -426,9 +463,12 @@ class WorkspaceRAGSearchAgent:
             storage_uri=storage_uri,
             hybrid_alpha=hybrid_alpha,
             hybrid_rrf_k=hybrid_rrf_k,
+            prefer_formatted=True,
         )
 
-        citations = self._build_citations(docs_with_scores, index_map)
+        citations = self._build_citations(
+            docs_with_scores, index_map, prefer_formatted=True
+        )
 
         # downstream 노드(문서 생성, citation 재구성 등)는 documents 안의 metadata에 담긴
         # formatted_text를 활용할 수 있다. 여기서는 검색 품질을 위해 semantic text 기반
