@@ -926,19 +926,25 @@ const providerDetails = {
   "google-drive": { name: 'Google Drive', icon: 'G', color: '#1A73E8', bg: '#E8F0FE' },
 };
 
+const normalizeProviderKey = (providerKey) => {
+  const lowered = (providerKey || '').toLowerCase();
+  if (lowered === 'googledrive' || lowered === 'google_drive') {
+    return 'google-drive';
+  }
+  return lowered;
+};
+
 const getDisconnectEndpoint = (connection) => {
-  const providerKey = (connection?.type || connection?.name || '').toLowerCase();
+  const providerKey = normalizeProviderKey(connection?.type || connection?.name || '');
 
   if (providerKey === 'notion') return '/api/notion/disconnect';
-  if (providerKey === 'googledrive' || providerKey === 'google-drive' || providerKey === 'google_drive') {
-    return '/api/google-drive/disconnect';
-  }
+  if (providerKey === 'google-drive') return '/api/google-drive/disconnect';
 
   return null;
 };
 
 const getProviderDetails = connection => {
-  const providerKey = (connection?.type || connection?.name || '').toLowerCase();
+  const providerKey = normalizeProviderKey(connection?.type || connection?.name || '');
 
   const baseDetails = providerDetails[providerKey];
 
@@ -1105,7 +1111,7 @@ function MainDashboard() {
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const connected = params.get('connected');
-    const source = params.get('source');
+    const source = normalizeProviderKey(params.get('source'));
     const syncFailed = params.get('syncFailed') === '1';
 
     if (connected && source) {
@@ -1217,7 +1223,7 @@ function MainDashboard() {
           break;
         }
 
-        const type = (source?.type || '').toLowerCase();
+        const type = normalizeProviderKey(source?.type || '');
         const displayName = source?.name || source?.type || 'Unknown';
 
         if (type === 'notion' || type === 'google-drive') {
