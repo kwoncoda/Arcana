@@ -187,16 +187,19 @@ class WorkspaceAgentOrchestrator:
         except NotionCredentialError as exc:
             raise NotionCredentialError(str(exc)) from exc
 
+        base_title = (generated.title or "제목 없음").strip() or "제목 없음"
+        notion_title = f"[Arcana] {base_title}"
+
         page_ref = await create_page_from_markdown(
             state["db"],
             credential,
-            title=generated.title,
+            title=notion_title,
             markdown=generated.content,
         )
 
         lines = [
             "요청하신 내용을 바탕으로 노션 페이지를 생성했습니다.",
-            f"제목: {generated.title or '제목 없음'}",
+            f"제목: {notion_title}",
         ]
         if generated.summary:
             lines.append(f"요약: {generated.summary}")
